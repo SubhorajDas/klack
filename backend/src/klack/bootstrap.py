@@ -1,0 +1,53 @@
+"""Application construction and process lifecycle wiring."""
+
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+import structlog
+from fastapi import FastAPI
+
+from klack.api.health import router as health_router
+from klack.api.router import create_api_router
+from klack.core.config import Settings
+from klack.core.container import build_container
+from klack.core.db.session import DatabaseHealthCheck
+from klack.core.errors import unhandled_exception_handler
+from klack.core.logging import configure_logging
+from klack.core.middleware.request_context import RequestContextMiddleware
+
+
+def create_app(
+    settings: Settings | None = None,
+    *,
+    database_health_check: DatabaseHealthCheck | None = None,
+) -> FastAPI:
+    """Build a fully configured FastAPI application without connecting to dependencies."""
+    resolved_settings = settings or Settings()  # type: ignore[call-arg]
+    configure_logging(resolved_settings)
+    logger = structlog.get_logger(__name__)
+    container = build_container(
+        resolved_settings,
+        database_health_check=database_health_check,
+    )
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        logger.info("application_started")
+        try:
+            yield
+        finally:
+            await container.engine.dispose()
+            logger.info("application_stopped")
+
+    app = FastAPI(
+        title=resolved_settings.app_name,
+        version=resolved_settings.app_version,
+        debug=resolved_settings.app_debug,
+        lifespan=lifespan,
+    )
+    app.state.container = container
+    app.add_middleware(RequestContextMiddleware)
+    app.add_exception_handler(Exception, unhandled_exception_handler)
+    app.include_router(health_router)
+    app.include_router(create_api_router(prefix=resolved_settings.api_v1_prefix))
+    return app

@@ -1,0 +1,83 @@
+[build-system]
+requires = ["uv_build>=0.11.32,<0.12"]
+build-backend = "uv_build"
+
+[project]
+name = "klack-api"
+version = "0.1.0"
+description = "Backend API for the Klack collaboration platform"
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+classifiers = ["Private :: Do Not Upload"]
+dependencies = [
+    "alembic>=1.18.5,<1.19",
+    "asyncpg>=0.31.0,<0.32",
+    "fastapi>=0.139.2,<0.140",
+    "pydantic>=2.13.4,<2.14",
+    "pydantic-settings>=2.14.2,<2.15",
+    "sqlalchemy[asyncio]>=2.0.51,<2.1",
+    "structlog>=26.1.0,<27",
+    "uvicorn[standard]>=0.51.0,<0.52",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1,<0.29",
+    "mypy>=2.3.0,<2.4",
+    "pre-commit>=4.6.0,<4.7",
+    "pytest>=9.1.1,<9.2",
+    "pytest-asyncio>=1.4.0,<1.5",
+    "pytest-cov>=7.1.0,<7.2",
+    "ruff>=0.15.22,<0.16",
+]
+
+[tool.uv]
+required-version = ">=0.11.32,<0.12"
+
+[tool.uv.build-backend]
+module-name = "klack"
+module-root = "src"
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+src = ["src", "tests", "alembic"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101"]
+"alembic/versions/*.py" = ["INP001"]
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+pretty = true
+show_error_codes = true
+warn_unreachable = true
+
+[tool.pytest.ini_options]
+addopts = [
+    "--strict-config",
+    "--strict-markers",
+    "--cov=klack",
+    "--cov-branch",
+    "--cov-report=term-missing:skip-covered",
+    "--cov-fail-under=90",
+]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+markers = [
+    "integration: requires a reachable PostgreSQL database",
+]
+
+[tool.coverage.run]
+source = ["klack"]
+omit = ["src/klack/main.py"]
+
+[tool.coverage.report]
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+]
