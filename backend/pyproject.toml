@@ -11,17 +11,26 @@ requires-python = ">=3.13,<3.14"
 classifiers = ["Private :: Do Not Upload"]
 dependencies = [
     "alembic>=1.18.5,<1.19",
+    "argon2-cffi>=25.1.0",
     "asyncpg>=0.31.0,<0.32",
+    "cryptography>=50.0.0",
+    "email-validator>=2.3.0",
     "fastapi>=0.139.2,<0.140",
+    "idna>=3.18",
     "pydantic>=2.13.4,<2.14",
     "pydantic-settings>=2.14.2,<2.15",
+    "pyjwt>=2.13.0",
     "sqlalchemy[asyncio]>=2.0.51,<2.1",
     "structlog>=26.1.0,<27",
     "uvicorn[standard]>=0.51.0,<0.52",
 ]
 
+[project.scripts]
+klack-identity-worker = "klack.identity_worker:main"
+
 [dependency-groups]
 dev = [
+    "aiosqlite>=0.22.1",
     "httpx>=0.28.1,<0.29",
     "mypy>=2.3.0,<2.4",
     "pre-commit>=4.6.0,<4.7",

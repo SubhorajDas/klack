@@ -8,7 +8,7 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from klack.core.config import Settings
+from klack.core.config import DatabaseSettings
 from klack.core.db.metadata import target_metadata
 
 config = context.config
@@ -19,7 +19,7 @@ if config.config_file_name is not None and config.get_section("loggers") is not 
 
 def get_database_url() -> str:
     """Load the migration URL from the same validated settings as the application."""
-    settings = Settings()  # type: ignore[call-arg]
+    settings = DatabaseSettings()  # type: ignore[call-arg]
     return settings.database_url_value()
 
 

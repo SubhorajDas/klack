@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 
 from klack.api.health import router as health_router
 from klack.api.router import create_api_router
@@ -14,6 +15,9 @@ from klack.core.db.session import DatabaseHealthCheck
 from klack.core.errors import unhandled_exception_handler
 from klack.core.logging import configure_logging
 from klack.core.middleware.request_context import RequestContextMiddleware
+from klack.core.problems import request_validation_exception_handler
+from klack.modules.identity.api.errors import identity_exception_handler
+from klack.modules.identity.domain.errors import IdentityError
 
 
 def create_app(
@@ -47,6 +51,8 @@ def create_app(
     )
     app.state.container = container
     app.add_middleware(RequestContextMiddleware)
+    app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
+    app.add_exception_handler(IdentityError, identity_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
     app.include_router(health_router)
     app.include_router(create_api_router(prefix=resolved_settings.api_v1_prefix))

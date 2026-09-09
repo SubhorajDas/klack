@@ -21,6 +21,12 @@ def settings() -> Settings:
         app_version="test-release",
         log_format=LogFormat.JSON,
         database_url="postgresql+asyncpg://klack:secret@127.0.0.1:5432/klack_test",
+        auth_jwt_secret="test-jwt-secret-at-least-thirty-two-bytes",
+        auth_refresh_secret="test-refresh-secret-at-least-thirty-two-bytes",
+        auth_action_secret="test-action-secret-at-least-thirty-two-bytes",
+        auth_trusted_origin="http://test",
+        auth_public_web_origin="http://test",
+        auth_cookie_secure=False,
     )
 
 

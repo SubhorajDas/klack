@@ -3,6 +3,7 @@
 Future feature model modules must be imported here before `target_metadata` is evaluated.
 """
 
+import klack.modules.identity.infrastructure.models  # noqa: F401
 from klack.core.db.base import Base
 
 target_metadata = Base.metadata

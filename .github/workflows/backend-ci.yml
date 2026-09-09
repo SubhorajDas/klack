@@ -57,6 +57,12 @@ jobs:
       LOG_LEVEL: INFO
       LOG_FORMAT: json
       DATABASE_URL: postgresql+asyncpg://klack:klack_test@127.0.0.1:5432/klack_test
+      AUTH_JWT_SECRET: ci-jwt-secret-at-least-thirty-two-bytes
+      AUTH_REFRESH_SECRET: ci-refresh-secret-at-least-thirty-two-bytes
+      AUTH_ACTION_SECRET: ci-action-secret-at-least-thirty-two-bytes
+      AUTH_TRUSTED_ORIGIN: http://test
+      AUTH_PUBLIC_WEB_ORIGIN: http://test
+      AUTH_COOKIE_SECURE: "false"
       RUN_INTEGRATION_TESTS: "1"
 
     steps:
