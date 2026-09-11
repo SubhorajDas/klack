@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from klack.modules.channels.api.router import router as channels_router
 from klack.modules.identity.api.router import router as identity_router
+from klack.modules.messaging.api.router import router as messaging_router
 from klack.modules.workspaces.api.router import router as workspaces_router
 
 
@@ -13,4 +14,5 @@ def create_api_router(*, prefix: str) -> APIRouter:
     router.include_router(identity_router)
     router.include_router(workspaces_router)
     router.include_router(channels_router)
+    router.include_router(messaging_router)
     return router

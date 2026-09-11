@@ -22,6 +22,8 @@ from klack.modules.channels.api.errors import channel_exception_handler
 from klack.modules.channels.domain.errors import ChannelError
 from klack.modules.identity.api.errors import identity_exception_handler
 from klack.modules.identity.domain.errors import IdentityError
+from klack.modules.messaging.api.errors import messaging_exception_handler
+from klack.modules.messaging.domain.errors import MessagingError
 from klack.modules.workspaces.api.errors import workspace_exception_handler
 from klack.modules.workspaces.domain.errors import WorkspaceError
 
@@ -64,6 +66,7 @@ def create_app(
     app.add_exception_handler(IdentityError, identity_exception_handler)
     app.add_exception_handler(WorkspaceError, workspace_exception_handler)
     app.add_exception_handler(ChannelError, channel_exception_handler)
+    app.add_exception_handler(MessagingError, messaging_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
     app.include_router(health_router)
     app.include_router(create_api_router(prefix=resolved_settings.api_v1_prefix))

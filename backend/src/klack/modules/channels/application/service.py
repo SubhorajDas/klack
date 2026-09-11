@@ -58,6 +58,63 @@ class ChannelView:
     is_member: bool
 
 
+class ChannelContentAccessService:
+    """Authorize access to channel content through explicit membership."""
+
+    def __init__(
+        self,
+        *,
+        repository: ChannelRepository,
+        workspace_access: WorkspaceAccessGateway,
+    ) -> None:
+        self._repository = repository
+        self._workspace_access = workspace_access
+
+    async def require_access(
+        self,
+        *,
+        actor_user_id: UUID,
+        workspace_id: UUID,
+        channel_id: UUID,
+        for_update: bool,
+    ) -> Channel:
+        """Return a channel only when the actor is an explicit channel member."""
+        actor = await self._workspace_access.require_membership(
+            actor_user_id=actor_user_id,
+            workspace_id=workspace_id,
+            for_update=for_update,
+        )
+        channel = await self._repository.get_channel(
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            for_update=for_update,
+        )
+        if channel is None:
+            await self._rollback_if_locked(for_update)
+            raise ChannelNotFound
+        membership = await self._repository.get_membership(
+            channel_id=channel_id,
+            user_id=actor_user_id,
+            for_update=for_update,
+        )
+        can_view = (
+            channel.visibility is ChannelVisibility.PUBLIC
+            or membership is not None
+            or actor.role in CHANNEL_MANAGER_ROLES
+        )
+        if not can_view:
+            await self._rollback_if_locked(for_update)
+            raise ChannelNotFound
+        if membership is None:
+            await self._rollback_if_locked(for_update)
+            raise ChannelPermissionDenied
+        return channel
+
+    async def _rollback_if_locked(self, for_update: bool) -> None:
+        if for_update:
+            await self._repository.rollback()
+
+
 class ChannelService:
     """Own channel transaction intent independently from HTTP and persistence."""
 

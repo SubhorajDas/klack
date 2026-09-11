@@ -21,6 +21,7 @@ from klack.modules.identity.infrastructure.security import (
     PasswordManager,
     SessionTokenManager,
 )
+from klack.modules.messaging.application.service import MessagePolicy
 from klack.modules.workspaces.application.service import WorkspacePolicy
 from klack.modules.workspaces.infrastructure.invitation_security import (
     InvitationTokenManager,
@@ -43,6 +44,7 @@ class AppContainer:
     workspace_invitation_tokens: InvitationTokenManager
     workspace_policy: WorkspacePolicy
     channel_policy: ChannelPolicy
+    message_policy: MessagePolicy
 
 
 def build_container(
@@ -109,4 +111,5 @@ def build_container(
             ),
         ),
         channel_policy=ChannelPolicy(),
+        message_policy=MessagePolicy(),
     )

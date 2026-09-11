@@ -19,8 +19,10 @@ vertical slices.
 - Single-use, manually shared workspace invitation links that do not depend on email delivery.
 - Public and private workspace channels with explicit, database-backed channel membership.
 - Soft channel archival and durable workspace-containment guarantees for channel memberships.
+- Durable channel messages with explicit-membership access, history pagination, author edits, and
+  content-erasing soft deletion.
 
-Messaging, realtime delivery, presence, and a frontend are not implemented yet.
+Realtime delivery, presence, and a frontend are not implemented yet.
 
 ## Prerequisites
 
@@ -121,6 +123,24 @@ owner or administrator. Channel slugs are lowercase, 1 through 80 characters, an
 workspace. The creator joins automatically, visibility changes preserve explicit membership, and
 archival is reversible. Workspace creation does not add an automatic `general` channel.
 
+### Messaging API
+
+Explicit channel members can create and read durable channel messages. Authors can edit their own
+live messages and soft-delete their own content. Deleted rows remain as body-free tombstones so
+conversation ordering stays stable. Archived channels remain readable to their members, reject new
+messages and edits, and still allow authors to delete their own messages.
+
+The versioned messaging routes are:
+
+- `POST|GET /api/v1/workspaces/{workspace_id}/channels/{channel_id}/messages`
+- `PATCH|DELETE /api/v1/workspaces/{workspace_id}/channels/{channel_id}/messages/{message_id}`
+
+History is returned newest first. Use the response's `next_before` value as the next request's
+`before` query parameter; page size defaults to 50 and is bounded at 100. Public-channel discovery
+does not grant message access: every operation requires current explicit channel membership.
+WebSocket delivery is deferred, so PostgreSQL-backed REST history is currently the recovery and
+refresh mechanism.
+
 ### Swagger demo accounts
 
 The repository includes an explicit, development-only fixture command for manually exercising the
@@ -193,6 +213,8 @@ refresh tokens. Revision `20260824_0002_identity_security_followups` adds email 
 encrypted outbox, and shared throttle buckets. Revision `20260909_0003` adds workspaces,
 memberships, and manual invitation links. Revision `20260911_0004` adds channels, explicit channel
 memberships, visibility, and soft archival.
+Revision `20260911_0005` adds durable channel messages, history pagination indexes, and deletion
+tombstones.
 
 ```powershell
 uv run --project backend alembic -c backend/alembic.ini upgrade head
