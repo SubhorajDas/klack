@@ -26,6 +26,7 @@ dependencies = [
 ]
 
 [project.scripts]
+klack-dev-seed = "klack.dev_seed:main"
 klack-identity-worker = "klack.identity_worker:main"
 
 [dependency-groups]

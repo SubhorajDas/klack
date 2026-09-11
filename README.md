@@ -15,8 +15,10 @@ slice: user registration, password authentication, and independently revocable b
 - Current-user, logout, logout-all, session listing, and individual session revocation APIs.
 - Single-use email verification and password recovery through an encrypted transactional outbox.
 - PostgreSQL-shared authentication throttles, active-session caps, and bounded global cleanup.
+- Database-backed workspaces with owner, administrator, and member authorization.
+- Single-use, manually shared workspace invitation links that do not depend on email delivery.
 
-Workspace membership, channels, messaging, and a frontend are not implemented yet.
+Channels, messaging, and a frontend are not implemented yet.
 
 ## Prerequisites
 
@@ -30,7 +32,10 @@ Copy-Item .env.example .env
 docker compose up --build
 ```
 
-The API is available at `http://127.0.0.1:8000`, with OpenAPI documentation at `/docs`.
+The API is available at `http://127.0.0.1:8000`. In development, interactive Swagger is available
+at `http://127.0.0.1:8000/docs`; use that exact host and port because unsafe requests require the
+configured exact Origin. The interactive page is disabled outside development, while
+`/openapi.json` remains available for tooling.
 Operational endpoints are:
 
 - `GET /health/live`: process-only liveness; never accesses PostgreSQL.
@@ -63,6 +68,58 @@ without consuming the token. Login, registration, verification, and recovery als
 PostgreSQL subject and IP throttle buckets. Login retains at most ten active sessions per account
 by default, revoking the oldest session families first.
 
+### Workspace API
+
+Authenticated users can create workspaces, manage memberships according to their current durable
+role, and generate manually shareable invitation links. Workspace authorization is read from
+PostgreSQL rather than JWT claims, so removals and role changes take effect immediately.
+
+The versioned workspace routes are:
+
+- `POST /api/v1/workspaces`
+- `GET /api/v1/workspaces`
+- `GET|PATCH /api/v1/workspaces/{workspace_id}`
+- `GET /api/v1/workspaces/{workspace_id}/memberships`
+- `GET /api/v1/workspaces/{workspace_id}/memberships/me`
+- `PATCH|DELETE /api/v1/workspaces/{workspace_id}/memberships/{user_id}`
+- `POST /api/v1/workspaces/{workspace_id}/leave`
+- `POST|GET /api/v1/workspaces/{workspace_id}/invitations`
+- `POST /api/v1/workspaces/{workspace_id}/invitations/{invitation_id}/rotate`
+- `DELETE /api/v1/workspaces/{workspace_id}/invitations/{invitation_id}`
+- `POST /api/v1/workspace-invitations/accept`
+
+Invitation links are seven-day, member-only bearer credentials by default. The API reveals a link
+only when it is created or rotated, stores only its HMAC digest, and never requires SMTP or email
+verification. The inviter must share the link through an external channel. Whoever first redeems
+the active link while authenticated becomes its member.
+
+### Swagger demo accounts
+
+The repository includes an explicit, development-only fixture command for manually exercising the
+authenticated API. After copying `.env.example` to `.env`, set `DEV_SEED_ENABLED=true` in `.env`
+and run this from the repository root after the stack is up and migrations have completed:
+
+```powershell
+uv run --project backend klack-dev-seed
+```
+
+The command creates four enabled, unverified accounts and one `Klack Swagger Demo` workspace:
+
+- `dev.owner@klack.example` — owner
+- `dev.admin@klack.example` — admin
+- `dev.member@klack.example` — member
+- `dev.outsider@klack.example` — not a member, ready to accept an invitation
+
+All four use the password in `DEV_SEED_PASSWORD` (the example value is local-only). The seed is
+idempotent, creates no sessions, email actions, outbox messages, or invitations, and refuses to
+run outside `APP_ENV=development`. It never runs automatically as part of Compose startup.
+
+Swagger stores the normal login cookies and automatically presents the readable CSRF cookie for
+same-origin API mutations. Log in as the owner, use the seeded workspace or create another one,
+create an invitation, then log in as the outsider and submit the token from the returned
+`invite_url` to `POST /api/v1/workspace-invitations/accept`. Logging in as each seeded role lets
+you exercise the role and last-owner rules without an email service.
+
 ### Local environment contract
 
 The root `.env` supports both host and Compose workflows:
@@ -70,8 +127,10 @@ The root `.env` supports both host and Compose workflows:
 - Host-run commands use `APP_ENV` and the host-facing `DATABASE_URL` directly.
 - Compose is development-only: it forces `APP_ENV=development` and builds an internal database
   URL from `POSTGRES_*` values.
+- The `klack-dev-seed` command is a host-run development tool and requires the separate
+  `DEV_SEED_ENABLED=true` opt-in plus `DEV_SEED_PASSWORD`.
 
-Replace all three checked-in `change-me` authentication secrets outside local development. Staging and
+Replace all four checked-in `change-me` application secrets outside local development. Staging and
 production reject those markers and require HTTPS plus secure cookies. Keep local PostgreSQL
 values URL-safe because Compose interpolates them into the internal URL.
 
@@ -103,7 +162,8 @@ registration, refresh rotation, replay, and row-lock concurrency checks.
 
 Revision `20260823_0001_identity_authentication` owns users, password credentials, sessions, and
 refresh tokens. Revision `20260824_0002_identity_security_followups` adds email actions, the
-encrypted outbox, and shared throttle buckets.
+encrypted outbox, and shared throttle buckets. Revision `20260909_0003` adds workspaces,
+memberships, and manual invitation links.
 
 ```powershell
 uv run --project backend alembic -c backend/alembic.ini upgrade head

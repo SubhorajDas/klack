@@ -24,6 +24,7 @@ def settings() -> Settings:
         auth_jwt_secret="test-jwt-secret-at-least-thirty-two-bytes",
         auth_refresh_secret="test-refresh-secret-at-least-thirty-two-bytes",
         auth_action_secret="test-action-secret-at-least-thirty-two-bytes",
+        workspace_invitation_secret=("test-workspace-invitation-secret-at-least-thirty-two-bytes"),
         auth_trusted_origin="http://test",
         auth_public_web_origin="http://test",
         auth_cookie_secure=False,

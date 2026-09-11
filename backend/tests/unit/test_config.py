@@ -14,6 +14,9 @@ def make_settings(**overrides: object) -> Settings:
         "auth_jwt_secret": "test-jwt-secret-at-least-thirty-two-bytes",
         "auth_refresh_secret": "test-refresh-secret-at-least-thirty-two-bytes",
         "auth_action_secret": "test-action-secret-at-least-thirty-two-bytes",
+        "workspace_invitation_secret": (
+            "test-workspace-invitation-secret-at-least-thirty-two-bytes"
+        ),
         "auth_trusted_origin": "http://test",
         "auth_public_web_origin": "http://test",
         "auth_cookie_secure": True,
@@ -137,7 +140,15 @@ def test_settings_canonicalize_browser_origins(origin: str, canonical: str) -> N
 
 
 @pytest.mark.parametrize("app_env", [AppEnvironment.STAGING, AppEnvironment.PRODUCTION])
-@pytest.mark.parametrize("field", ["auth_jwt_secret", "auth_refresh_secret", "auth_action_secret"])
+@pytest.mark.parametrize(
+    "field",
+    [
+        "auth_jwt_secret",
+        "auth_refresh_secret",
+        "auth_action_secret",
+        "workspace_invitation_secret",
+    ],
+)
 def test_deployed_settings_reject_checked_in_secret_markers(
     app_env: AppEnvironment,
     field: str,
@@ -160,6 +171,7 @@ def test_development_settings_allow_documented_example_secrets() -> None:
         auth_jwt_secret="development-jwt-secret-change-me-00000001",
         auth_refresh_secret="development-refresh-secret-change-me-00002",
         auth_action_secret="development-action-secret-change-me-0000003",
+        workspace_invitation_secret=("development-workspace-invitation-secret-change-me-00004"),
         auth_trusted_origin="http://127.0.0.1:8000",
         auth_public_web_origin="http://127.0.0.1:3000",
         auth_cookie_secure=False,
@@ -168,7 +180,7 @@ def test_development_settings_allow_documented_example_secrets() -> None:
     assert settings.app_env is AppEnvironment.DEVELOPMENT
 
 
-def test_settings_require_distinct_auth_secrets() -> None:
+def test_settings_require_distinct_application_secrets() -> None:
     shared = "shared-auth-secret-at-least-thirty-two-bytes"
     with pytest.raises(ValidationError, match="must be different"):
         make_settings(auth_jwt_secret=shared, auth_refresh_secret=shared)
@@ -202,6 +214,7 @@ def test_database_secret_is_redacted() -> None:
     assert "very-secret" not in repr(settings)
     assert "very-secret" not in str(settings.model_dump())
     assert "very-secret" in settings.database_url_value()
+    assert settings.workspace_invitation_secret_value().startswith("test-workspace-")
 
 
 def test_database_connect_args_include_safeguards() -> None:

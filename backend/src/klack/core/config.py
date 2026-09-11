@@ -114,6 +114,9 @@ class Settings(DatabaseSettings):
     auth_jwt_secret: SecretLength
     auth_refresh_secret: SecretLength
     auth_action_secret: SecretLength
+    workspace_invitation_secret: SecretLength = SecretStr(
+        "development-workspace-invitation-secret-change-me-00004",
+    )
     auth_issuer: str = "klack-api"
     auth_audience: str = "klack-web"
     auth_access_ttl_seconds: Annotated[int, Field(ge=60, le=3_600)] = 900
@@ -132,6 +135,7 @@ class Settings(DatabaseSettings):
     auth_login_rate_limit: Annotated[int, Field(ge=1, le=100)] = 10
     auth_email_action_rate_limit: Annotated[int, Field(ge=1, le=100)] = 5
     auth_action_complete_rate_limit: Annotated[int, Field(ge=1, le=100)] = 10
+    workspace_invitation_ttl_seconds: Annotated[int, Field(ge=900, le=2_592_000)] = 604_800
 
     smtp_host: str | None = None
     smtp_port: Annotated[int, Field(ge=1, le=65_535)] = 587
@@ -250,17 +254,22 @@ class Settings(DatabaseSettings):
                     self.auth_jwt_secret,
                     self.auth_refresh_secret,
                     self.auth_action_secret,
+                    self.workspace_invitation_secret,
                 )
             ):
-                msg = "authentication secrets must not use checked-in example values"
+                msg = "application secrets must not use checked-in example values"
                 raise ValueError(msg)
-        auth_secrets = {
+        application_secrets = {
             self.auth_jwt_secret.get_secret_value(),
             self.auth_refresh_secret.get_secret_value(),
             self.auth_action_secret.get_secret_value(),
+            self.workspace_invitation_secret.get_secret_value(),
         }
-        if len(auth_secrets) != 3:
-            msg = "AUTH_JWT_SECRET, AUTH_REFRESH_SECRET, and AUTH_ACTION_SECRET must be different"
+        if len(application_secrets) != 4:
+            msg = (
+                "AUTH_JWT_SECRET, AUTH_REFRESH_SECRET, AUTH_ACTION_SECRET, and "
+                "WORKSPACE_INVITATION_SECRET must be different"
+            )
             raise ValueError(msg)
         if self.smtp_starttls and self.smtp_use_ssl:
             msg = "SMTP_STARTTLS and SMTP_USE_SSL cannot both be true"
@@ -303,6 +312,10 @@ class Settings(DatabaseSettings):
     def auth_action_secret_value(self) -> str:
         """Return email-action/outbox key material only at its security boundary."""
         return self.auth_action_secret.get_secret_value()
+
+    def workspace_invitation_secret_value(self) -> str:
+        """Return invitation-token key material only at its security boundary."""
+        return self.workspace_invitation_secret.get_secret_value()
 
     def smtp_password_value(self) -> str | None:
         """Return the SMTP password only at the email-delivery boundary."""

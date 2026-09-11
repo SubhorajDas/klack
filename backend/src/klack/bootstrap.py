@@ -6,10 +6,12 @@ from contextlib import asynccontextmanager
 import structlog
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
+from starlette.responses import HTMLResponse
 
 from klack.api.health import router as health_router
 from klack.api.router import create_api_router
-from klack.core.config import Settings
+from klack.api.swagger import development_swagger_ui_html
+from klack.core.config import AppEnvironment, Settings
 from klack.core.container import build_container
 from klack.core.db.session import DatabaseHealthCheck
 from klack.core.errors import unhandled_exception_handler
@@ -18,6 +20,8 @@ from klack.core.middleware.request_context import RequestContextMiddleware
 from klack.core.problems import request_validation_exception_handler
 from klack.modules.identity.api.errors import identity_exception_handler
 from klack.modules.identity.domain.errors import IdentityError
+from klack.modules.workspaces.api.errors import workspace_exception_handler
+from klack.modules.workspaces.domain.errors import WorkspaceError
 
 
 def create_app(
@@ -48,12 +52,27 @@ def create_app(
         version=resolved_settings.app_version,
         debug=resolved_settings.app_debug,
         lifespan=lifespan,
+        docs_url=None,
+        redoc_url=None,
+        swagger_ui_oauth2_redirect_url=None,
     )
     app.state.container = container
     app.add_middleware(RequestContextMiddleware)
     app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
     app.add_exception_handler(IdentityError, identity_exception_handler)
+    app.add_exception_handler(WorkspaceError, workspace_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
     app.include_router(health_router)
     app.include_router(create_api_router(prefix=resolved_settings.api_v1_prefix))
+    if resolved_settings.app_env is AppEnvironment.DEVELOPMENT:
+
+        @app.get("/docs", include_in_schema=False)
+        async def development_swagger() -> HTMLResponse:
+            """Serve interactive documentation only in the local development environment."""
+            return development_swagger_ui_html(
+                openapi_url=app.openapi_url or "/openapi.json",
+                api_prefix=resolved_settings.api_v1_prefix,
+                title=f"{resolved_settings.app_name} - Swagger UI",
+            )
+
     return app

@@ -20,6 +20,10 @@ from klack.modules.identity.infrastructure.security import (
     PasswordManager,
     SessionTokenManager,
 )
+from klack.modules.workspaces.application.service import WorkspacePolicy
+from klack.modules.workspaces.infrastructure.invitation_security import (
+    InvitationTokenManager,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +39,8 @@ class AppContainer:
     session_token_manager: SessionTokenManager
     action_token_manager: ActionTokenManager
     identity_policy: IdentityPolicy
+    workspace_invitation_tokens: InvitationTokenManager
+    workspace_policy: WorkspacePolicy
 
 
 def build_container(
@@ -91,5 +97,13 @@ def build_container(
             login_rate_limit=settings.auth_login_rate_limit,
             email_action_rate_limit=settings.auth_email_action_rate_limit,
             action_complete_rate_limit=settings.auth_action_complete_rate_limit,
+        ),
+        workspace_invitation_tokens=InvitationTokenManager(
+            secret=settings.workspace_invitation_secret_value(),
+        ),
+        workspace_policy=WorkspacePolicy(
+            invitation_ttl=timedelta(
+                seconds=settings.workspace_invitation_ttl_seconds,
+            ),
         ),
     )
