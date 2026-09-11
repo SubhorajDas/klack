@@ -64,7 +64,6 @@ jobs:
       AUTH_PUBLIC_WEB_ORIGIN: http://test
       AUTH_COOKIE_SECURE: "false"
       RUN_INTEGRATION_TESTS: "1"
-      AUTH_COOKIE_SECURE: "false"
 
     steps:
       - name: Check out repository
