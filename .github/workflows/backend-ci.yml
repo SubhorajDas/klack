@@ -62,7 +62,7 @@ jobs:
       AUTH_ACTION_SECRET: ci-action-secret-at-least-thirty-two-bytes
       AUTH_TRUSTED_ORIGIN: http://test
       AUTH_PUBLIC_WEB_ORIGIN: http://test
-      AUTH_COOKIE_SECURE: "false"
+      AUTH_COOKIE_SECURE: "true"
       RUN_INTEGRATION_TESTS: "1"
 
     steps:
