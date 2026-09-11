@@ -1,8 +1,8 @@
 # Klack
 
-Klack is a production-oriented collaboration platform built incrementally as a modular
-monolith. The backend currently includes its infrastructure foundation plus the first vertical
-slice: user registration, password authentication, and independently revocable browser sessions.
+Klack is a production-oriented collaboration platform built incrementally as a modular monolith.
+The backend currently includes its infrastructure foundation plus identity, workspace, and channel
+vertical slices.
 
 ## Implemented
 
@@ -17,8 +17,10 @@ slice: user registration, password authentication, and independently revocable b
 - PostgreSQL-shared authentication throttles, active-session caps, and bounded global cleanup.
 - Database-backed workspaces with owner, administrator, and member authorization.
 - Single-use, manually shared workspace invitation links that do not depend on email delivery.
+- Public and private workspace channels with explicit, database-backed channel membership.
+- Soft channel archival and durable workspace-containment guarantees for channel memberships.
 
-Channels, messaging, and a frontend are not implemented yet.
+Messaging, realtime delivery, presence, and a frontend are not implemented yet.
 
 ## Prerequisites
 
@@ -93,6 +95,32 @@ only when it is created or rotated, stores only its HMAC digest, and never requi
 verification. The inviter must share the link through an external channel. Whoever first redeems
 the active link while authenticated becomes its member.
 
+### Channel API
+
+Channels organize a workspace into public or private collaboration areas. Public channels are
+discoverable by every workspace member, but joining remains explicit. Private channels are hidden
+from ordinary nonmembers; workspace owners and administrators can see their metadata for
+governance, while future channel content will still require membership. Channel-local roles do not
+exist: current durable workspace roles govern channel management.
+
+The versioned channel routes are:
+
+- `POST /api/v1/workspaces/{workspace_id}/channels`
+- `GET /api/v1/workspaces/{workspace_id}/channels`
+- `GET|PATCH /api/v1/workspaces/{workspace_id}/channels/{channel_id}`
+- `POST /api/v1/workspaces/{workspace_id}/channels/{channel_id}/archive`
+- `POST /api/v1/workspaces/{workspace_id}/channels/{channel_id}/unarchive`
+- `GET /api/v1/workspaces/{workspace_id}/channels/{channel_id}/memberships`
+- `GET|PUT|DELETE /api/v1/workspaces/{workspace_id}/channels/{channel_id}/memberships/me`
+- `PUT|DELETE /api/v1/workspaces/{workspace_id}/channels/{channel_id}/memberships/{user_id}`
+
+Owners and administrators can create, update, archive, restore, and manage channels. Administrators
+cannot remove workspace owners or other administrators from channel membership. Workspace members
+can join public channels and leave channels they have joined; private membership is managed by an
+owner or administrator. Channel slugs are lowercase, 1 through 80 characters, and unique within a
+workspace. The creator joins automatically, visibility changes preserve explicit membership, and
+archival is reversible. Workspace creation does not add an automatic `general` channel.
+
 ### Swagger demo accounts
 
 The repository includes an explicit, development-only fixture command for manually exercising the
@@ -163,7 +191,8 @@ registration, refresh rotation, replay, and row-lock concurrency checks.
 Revision `20260823_0001_identity_authentication` owns users, password credentials, sessions, and
 refresh tokens. Revision `20260824_0002_identity_security_followups` adds email actions, the
 encrypted outbox, and shared throttle buckets. Revision `20260909_0003` adds workspaces,
-memberships, and manual invitation links.
+memberships, and manual invitation links. Revision `20260911_0004` adds channels, explicit channel
+memberships, visibility, and soft archival.
 
 ```powershell
 uv run --project backend alembic -c backend/alembic.ini upgrade head

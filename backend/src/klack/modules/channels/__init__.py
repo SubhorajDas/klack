@@ -1,0 +1,1 @@
+"""Channel collaboration feature module."""

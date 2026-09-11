@@ -18,6 +18,8 @@ from klack.core.errors import unhandled_exception_handler
 from klack.core.logging import configure_logging
 from klack.core.middleware.request_context import RequestContextMiddleware
 from klack.core.problems import request_validation_exception_handler
+from klack.modules.channels.api.errors import channel_exception_handler
+from klack.modules.channels.domain.errors import ChannelError
 from klack.modules.identity.api.errors import identity_exception_handler
 from klack.modules.identity.domain.errors import IdentityError
 from klack.modules.workspaces.api.errors import workspace_exception_handler
@@ -61,6 +63,7 @@ def create_app(
     app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
     app.add_exception_handler(IdentityError, identity_exception_handler)
     app.add_exception_handler(WorkspaceError, workspace_exception_handler)
+    app.add_exception_handler(ChannelError, channel_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
     app.include_router(health_router)
     app.include_router(create_api_router(prefix=resolved_settings.api_v1_prefix))

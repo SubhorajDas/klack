@@ -59,6 +59,69 @@ class InvitationCreation:
     raw_token: str
 
 
+class WorkspaceAccessService:
+    """Expose durable workspace authorization to adjacent feature modules."""
+
+    def __init__(self, repository: WorkspaceRepository) -> None:
+        self._repository = repository
+
+    async def require_access(
+        self,
+        *,
+        actor_user_id: UUID,
+        workspace_id: UUID,
+        for_update: bool,
+    ) -> tuple[Workspace, WorkspaceMembership]:
+        """Load a visible workspace and its current actor membership."""
+        workspace = await self._repository.get_workspace(
+            workspace_id,
+            for_update=for_update,
+        )
+        if workspace is None:
+            if for_update:
+                await self._repository.rollback()
+            raise WorkspaceNotFound
+        membership = await self._repository.get_membership(
+            workspace_id=workspace_id,
+            user_id=actor_user_id,
+            for_update=for_update,
+        )
+        if membership is None:
+            if for_update:
+                await self._repository.rollback()
+            raise WorkspaceNotFound
+        return workspace, membership
+
+    async def require_membership(
+        self,
+        *,
+        actor_user_id: UUID,
+        workspace_id: UUID,
+        for_update: bool,
+    ) -> WorkspaceMembership:
+        """Return the actor's membership while hiding absent or inaccessible workspaces."""
+        _workspace, membership = await self.require_access(
+            actor_user_id=actor_user_id,
+            workspace_id=workspace_id,
+            for_update=for_update,
+        )
+        return membership
+
+    async def get_membership(
+        self,
+        *,
+        workspace_id: UUID,
+        user_id: UUID,
+        for_update: bool,
+    ) -> WorkspaceMembership | None:
+        """Load a target membership after the caller has established workspace access."""
+        return await self._repository.get_membership(
+            workspace_id=workspace_id,
+            user_id=user_id,
+            for_update=for_update,
+        )
+
+
 class WorkspaceService:
     """Own workspace transaction intent independently from adapters and persistence."""
 
@@ -72,6 +135,7 @@ class WorkspaceService:
         uuid_factory: Callable[[], UUID] = uuid4,
     ) -> None:
         self._repository = repository
+        self._workspace_access = WorkspaceAccessService(repository)
         self._invitation_tokens = invitation_tokens
         self._policy = policy or WorkspacePolicy()
         self._clock = clock
@@ -458,24 +522,11 @@ class WorkspaceService:
         workspace_id: UUID,
         for_update: bool,
     ) -> tuple[Workspace, WorkspaceMembership]:
-        workspace = await self._repository.get_workspace(
-            workspace_id,
-            for_update=for_update,
-        )
-        if workspace is None:
-            if for_update:
-                await self._repository.rollback()
-            raise WorkspaceNotFound
-        membership = await self._repository.get_membership(
+        return await self._workspace_access.require_access(
+            actor_user_id=actor_user_id,
             workspace_id=workspace_id,
-            user_id=actor_user_id,
             for_update=for_update,
         )
-        if membership is None:
-            if for_update:
-                await self._repository.rollback()
-            raise WorkspaceNotFound
-        return workspace, membership
 
     async def _require_invitation_manager(
         self,

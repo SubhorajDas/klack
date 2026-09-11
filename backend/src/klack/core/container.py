@@ -13,6 +13,7 @@ from klack.core.db.session import (
     create_engine,
     create_session_factory,
 )
+from klack.modules.channels.application.service import ChannelPolicy
 from klack.modules.identity.application.service import IdentityPolicy
 from klack.modules.identity.infrastructure.action_security import ActionTokenManager
 from klack.modules.identity.infrastructure.security import (
@@ -41,6 +42,7 @@ class AppContainer:
     identity_policy: IdentityPolicy
     workspace_invitation_tokens: InvitationTokenManager
     workspace_policy: WorkspacePolicy
+    channel_policy: ChannelPolicy
 
 
 def build_container(
@@ -106,4 +108,5 @@ def build_container(
                 seconds=settings.workspace_invitation_ttl_seconds,
             ),
         ),
+        channel_policy=ChannelPolicy(),
     )
