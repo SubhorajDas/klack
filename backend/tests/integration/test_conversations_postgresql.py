@@ -1,0 +1,103 @@
+"""Concurrent conversation changes on real PostgreSQL."""
+
+import asyncio
+import os
+from uuid import UUID
+
+import pytest
+from test_messages_postgresql import _message_service, _seed_conversation
+from test_messages_postgresql import message_container as message_container
+from test_messages_postgresql import (
+    migrated_message_schema as migrated_message_schema,
+)
+
+from klack.core.container import AppContainer
+from klack.modules.channels.application.service import ChannelContentAccessService
+from klack.modules.channels.infrastructure.repository import SqlAlchemyChannelRepository
+from klack.modules.messaging.application.conversations import ConversationService
+from klack.modules.messaging.infrastructure.conversations import SqlAlchemyConversationRepository
+from klack.modules.messaging.infrastructure.repository import SqlAlchemyMessageRepository
+from klack.modules.realtime.infrastructure.repository import SqlAlchemyRealtimeEventRepository
+from klack.modules.workspaces.application.service import WorkspaceAccessService
+from klack.modules.workspaces.infrastructure.repository import SqlAlchemyWorkspaceRepository
+
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.skipif(os.getenv("RUN_INTEGRATION_TESTS") != "1", reason="requires PostgreSQL"),
+]
+
+
+def conversation(session):
+    workspaces = WorkspaceAccessService(SqlAlchemyWorkspaceRepository(session))
+    return ConversationService(
+        SqlAlchemyConversationRepository(session),
+        SqlAlchemyMessageRepository(session),
+        ChannelContentAccessService(
+            repository=SqlAlchemyChannelRepository(session), workspace_access=workspaces
+        ),
+        workspaces,
+        SqlAlchemyRealtimeEventRepository(session),
+    )
+
+
+async def test_concurrent_direct_creation_reactions_and_cursors(message_container: AppContainer):
+    container = message_container
+    seeded = await _seed_conversation(container)
+
+    async def open_pair(actor: UUID, target: UUID):
+        async with container.session_factory() as session:
+            return await conversation(session).open_direct(seeded.workspace_id, actor, target)
+
+    first, second = await asyncio.gather(
+        open_pair(seeded.owner_id, seeded.member_id), open_pair(seeded.member_id, seeded.owner_id)
+    )
+    assert first.channel.id == second.channel.id
+    channel_id = first.channel.id
+    async with container.session_factory() as session:
+        service = _message_service(container, session, realtime=True)
+        root = await service.create_message(
+            actor_user_id=seeded.owner_id,
+            workspace_id=seeded.workspace_id,
+            channel_id=channel_id,
+            body="Root",
+        )
+
+    async def reply(index: int):
+        async with container.session_factory() as session:
+            return await _message_service(container, session, realtime=True).create_message(
+                actor_user_id=seeded.member_id,
+                workspace_id=seeded.workspace_id,
+                channel_id=channel_id,
+                body=f"Reply {index}",
+                parent_message_id=root.id,
+            )
+
+    replies = await asyncio.gather(*(reply(i) for i in range(4)))
+
+    async def react(actor: UUID):
+        async with container.session_factory() as session:
+            return await conversation(session).react(
+                seeded.workspace_id, channel_id, actor, root.id, "👍", True
+            )
+
+    await asyncio.gather(react(seeded.owner_id), react(seeded.owner_id), react(seeded.member_id))
+
+    async def read(message_id: UUID):
+        async with container.session_factory() as session:
+            return await conversation(session).read_state(
+                seeded.workspace_id, channel_id, seeded.owner_id, message_id
+            )
+
+    await asyncio.gather(*(read(m.id) for m in [*reversed(replies), root]))
+    async with container.session_factory() as session:
+        state = await conversation(session).read_state(
+            seeded.workspace_id, channel_id, seeded.owner_id
+        )
+        assert state == (max(replies, key=lambda m: (m.created_at, m.id)).id, 0)
+        page = await _message_service(container, session).list_messages(
+            actor_user_id=seeded.owner_id, workspace_id=seeded.workspace_id, channel_id=channel_id
+        )
+        assert len(page.messages) == 1
+        assert page.messages[0].reply_count == 4
+        assert len(page.messages[0].reactions) == 2
+        assert page.messages[0].revision == 7

@@ -23,6 +23,10 @@ Key guarantees:
 - `klack-identity-worker` delivers leased SMTP work and drains expired identity state in batches.
 - Workspace roles are loaded durably and every mutation reauthorizes under a workspace row lock.
 - Invitation links are HMAC-only at rest, single-use, revocable, and independent of SMTP.
+- Message changes and body-free realtime signals commit atomically before PostgreSQL broadcasts
+  them to authenticated WebSocket subscribers on every API replica.
+- Realtime delivery rechecks durable sessions and explicit channel membership, bounds connection
+  memory, and falls back to REST history after any delivery-path failure.
 
 The identity module lives at `src/klack/modules/identity` and follows the domain/application/
 infrastructure/API dependency direction. Its schema is introduced by
@@ -33,6 +37,11 @@ recorded in `docs/adr/0002-identity-and-browser-sessions.md` and
 The workspace module lives at `src/klack/modules/workspaces`. Its schema is introduced by the
 `20260909_0003` Alembic revision, and its ownership, authorization, and manual-invitation decisions
 are recorded in `docs/adr/0004-workspaces-memberships-and-invitation-links.md`.
+
+The messaging and realtime modules live at `src/klack/modules/messaging` and
+`src/klack/modules/realtime`. Revisions `20260911_0005` and `20260911_0006` add durable messages,
+retry-safe client identifiers, revisions, and committed realtime signals. Message writes remain on
+REST; `/api/v1/realtime` uses the `klack.realtime.v1` WebSocket subprotocol for delivery.
 
 Run backend commands from the repository root with `uv run --project backend ...` so the root
 `.env` is discovered consistently. Pass `-c backend/alembic.ini` to Alembic when invoking it from

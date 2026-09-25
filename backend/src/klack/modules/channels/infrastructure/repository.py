@@ -49,7 +49,7 @@ class SqlAlchemyChannelRepository:
         statement = (
             select(ChannelRecord, ChannelMembershipRecord)
             .outerjoin(ChannelMembershipRecord, membership_join)
-            .where(ChannelRecord.workspace_id == workspace_id)
+            .where(ChannelRecord.workspace_id == workspace_id, ChannelRecord.direct_key.is_(None))
         )
         if not can_view_private:
             statement = statement.where(
@@ -190,6 +190,7 @@ class SqlAlchemyChannelRepository:
     @staticmethod
     def _channel(record: ChannelRecord) -> Channel:
         return Channel(
+            direct_key=record.direct_key,
             id=record.id,
             workspace_id=record.workspace_id,
             name=record.name,

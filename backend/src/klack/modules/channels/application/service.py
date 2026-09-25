@@ -100,7 +100,7 @@ class ChannelContentAccessService:
         can_view = (
             channel.visibility is ChannelVisibility.PUBLIC
             or membership is not None
-            or actor.role in CHANNEL_MANAGER_ROLES
+            or (channel.direct_key is None and actor.role in CHANNEL_MANAGER_ROLES)
         )
         if not can_view:
             await self._rollback_if_locked(for_update)
@@ -568,7 +568,7 @@ class ChannelService:
             channel_id=channel_id,
             for_update=True,
         )
-        if channel is None:
+        if channel is None or channel.direct_key is not None:
             await self._repository.rollback()
             raise ChannelNotFound
         return channel
@@ -643,7 +643,7 @@ class ChannelService:
         return (
             channel.visibility is ChannelVisibility.PUBLIC
             or channel_membership is not None
-            or self._is_manager(actor)
+            or (channel.direct_key is None and self._is_manager(actor))
         )
 
     def _normalize_name(self, name: str) -> str:

@@ -9,7 +9,9 @@ from sqlalchemy import (
     ForeignKey,
     ForeignKeyConstraint,
     Index,
+    Integer,
     Text,
+    UniqueConstraint,
     Uuid,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -47,7 +49,21 @@ class MessageRecord(Base):
             "created_at",
             "id",
         ),
+        UniqueConstraint(
+            "channel_id",
+            "author_user_id",
+            "client_message_id",
+        ),
+        CheckConstraint("revision >= 1", name="positive_revision"),
+        UniqueConstraint("channel_id", "id"),
+        ForeignKeyConstraint(
+            ["channel_id", "parent_message_id"],
+            ["message_messages.channel_id", "message_messages.id"],
+        ),
+        Index("ix_message_messages_parent", "parent_message_id", "created_at", "id"),
     )
+
+    parent_message_id: Mapped[UUID | None] = mapped_column(Uuid)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     workspace_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
@@ -61,3 +77,37 @@ class MessageRecord(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    client_message_id: Mapped[UUID | None] = mapped_column(Uuid)
+    revision: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+
+
+class ReactionRecord(Base):
+    """One user's reaction, unique per message and emoji."""
+
+    __tablename__ = "message_reactions"
+    message_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("message_messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("identity_users.id", ondelete="CASCADE"), primary_key=True
+    )
+    emoji: Mapped[str] = mapped_column(Text, primary_key=True)
+
+
+class ReadCursorRecord(Base):
+    """A member's monotonic position in channel history."""
+
+    __tablename__ = "message_read_cursors"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["channel_id", "user_id"],
+            ["channel_memberships.channel_id", "channel_memberships.user_id"],
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["channel_id", "message_id"], ["message_messages.channel_id", "message_messages.id"]
+        ),
+    )
+    channel_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    message_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)

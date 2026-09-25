@@ -68,6 +68,7 @@ class ChannelResponse(BaseModel):
     archived_at: datetime | None
     archived_by_user_id: UUID | None
     is_member: bool
+    direct_key: str | None = None
 
     @classmethod
     def from_view(cls, view: ChannelView) -> Self:
@@ -83,6 +84,7 @@ class ChannelResponse(BaseModel):
             archived_at=channel.archived_at,
             archived_by_user_id=channel.archived_by_user_id,
             is_member=view.is_member,
+            direct_key=channel.direct_key,
         )
 
 

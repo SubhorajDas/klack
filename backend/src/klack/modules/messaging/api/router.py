@@ -34,12 +34,31 @@ async def create_message(
     identity: CurrentMutationIdentityDependency,
 ) -> MessageResponse:
     """Create a message as an explicit member of an active channel."""
-    message = await service.create_message(
-        actor_user_id=identity.user.id,
-        workspace_id=workspace_id,
-        channel_id=channel_id,
-        body=payload.body,
-    )
+    if payload.client_message_id is None:
+        message = await service.create_message(
+            actor_user_id=identity.user.id,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            body=payload.body,
+            **(
+                {"parent_message_id": payload.parent_message_id}
+                if payload.parent_message_id
+                else {}
+            ),
+        )
+    else:
+        message = await service.create_message(
+            actor_user_id=identity.user.id,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            body=payload.body,
+            **(
+                {"parent_message_id": payload.parent_message_id}
+                if payload.parent_message_id
+                else {}
+            ),
+            client_message_id=payload.client_message_id,
+        )
     response.headers["Cache-Control"] = "no-store"
     return MessageResponse.from_domain(message)
 
@@ -55,6 +74,7 @@ async def list_messages(
     service: MessageServiceDependency,
     identity: CurrentIdentityDependency,
     before: UUID | None = None,
+    parent_message_id: UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> MessagesResponse:
     """List one reverse-chronological page of channel history."""
@@ -63,6 +83,7 @@ async def list_messages(
         workspace_id=workspace_id,
         channel_id=channel_id,
         before=before,
+        **({"parent_message_id": parent_message_id} if parent_message_id else {}),
         limit=limit,
     )
     response.headers["Cache-Control"] = "no-store"

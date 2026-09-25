@@ -17,6 +17,7 @@ dependencies = [
     "email-validator>=2.3.0",
     "fastapi>=0.139.2,<0.140",
     "idna>=3.18",
+    "livekit-api>=1.2.1",
     "pydantic>=2.13.4,<2.14",
     "pydantic-settings>=2.14.2,<2.15",
     "pyjwt>=2.13.0",

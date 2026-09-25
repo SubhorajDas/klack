@@ -111,6 +111,8 @@ def make_message(
     body: str | None = "hello",
     edited_at: datetime | None = None,
     deleted_at: datetime | None = None,
+    client_message_id: UUID | None = None,
+    revision: int = 1,
 ) -> Message:
     return Message(
         id=UUID(int=message_id),
@@ -121,6 +123,8 @@ def make_message(
         created_at=created_at,
         edited_at=edited_at,
         deleted_at=deleted_at,
+        client_message_id=client_message_id,
+        revision=revision,
     )
 
 
@@ -159,6 +163,7 @@ async def test_message_round_trip_update_and_tombstone(session: AsyncSession) ->
         body="edited",
         edited_at=edited_at,
         deleted_at=None,
+        revision=2,
     )
     await repository.commit()
     deleted_at = NOW + timedelta(minutes=2)
@@ -167,6 +172,7 @@ async def test_message_round_trip_update_and_tombstone(session: AsyncSession) ->
         body=None,
         edited_at=edited_at,
         deleted_at=deleted_at,
+        revision=3,
     )
     await repository.commit()
     tombstone = await repository.get_message(
@@ -179,6 +185,24 @@ async def test_message_round_trip_update_and_tombstone(session: AsyncSession) ->
     assert as_utc(tombstone.edited_at) == edited_at
     assert as_utc(tombstone.deleted_at) == deleted_at
     assert tombstone.is_deleted
+    assert tombstone.revision == 3
+    await repository.rollback()
+
+
+async def test_client_message_id_insert_is_idempotent(session: AsyncSession) -> None:
+    repository = SqlAlchemyMessageRepository(session)
+    client_message_id = UUID(int=500)
+    first = make_message(501, client_message_id=client_message_id)
+    duplicate = make_message(502, client_message_id=client_message_id)
+    assert await repository.add_message_idempotently(first)
+    assert not await repository.add_message_idempotently(duplicate)
+    loaded = await repository.get_message_by_client_id(
+        channel_id=CHANNEL_ID,
+        author_user_id=AUTHOR_ID,
+        client_message_id=client_message_id,
+    )
+    assert loaded is not None
+    assert loaded.id == first.id
     await repository.rollback()
 
 

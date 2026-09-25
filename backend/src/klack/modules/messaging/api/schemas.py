@@ -23,6 +23,8 @@ class CreateMessageRequest(StrictRequest):
     """Create a message in one channel."""
 
     body: MessageBody
+    client_message_id: UUID | None = None
+    parent_message_id: UUID | None = None
 
 
 class UpdateMessageRequest(StrictRequest):
@@ -42,6 +44,11 @@ class MessageResponse(BaseModel):
     created_at: datetime
     edited_at: datetime | None
     deleted_at: datetime | None
+    client_message_id: UUID | None
+    revision: int
+    parent_message_id: UUID | None
+    reactions: list[tuple[str, UUID]]
+    reply_count: int
 
     @classmethod
     def from_domain(cls, message: Message) -> Self:
@@ -54,6 +61,11 @@ class MessageResponse(BaseModel):
             created_at=message.created_at,
             edited_at=message.edited_at,
             deleted_at=message.deleted_at,
+            client_message_id=message.client_message_id,
+            revision=message.revision,
+            parent_message_id=message.parent_message_id,
+            reactions=list(message.reactions),
+            reply_count=message.reply_count,
         )
 
 

@@ -17,6 +17,11 @@ class Message:
     created_at: datetime
     edited_at: datetime | None
     deleted_at: datetime | None
+    client_message_id: UUID | None = None
+    revision: int = 1
+    parent_message_id: UUID | None = None
+    reactions: tuple[tuple[str, UUID], ...] = ()
+    reply_count: int = 0
 
     @property
     def is_deleted(self) -> bool:

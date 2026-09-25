@@ -7,6 +7,7 @@ from starlette.responses import JSONResponse
 
 from klack.core.problems import problem_response
 from klack.modules.messaging.domain.errors import (
+    ClientMessageConflict,
     InvalidMessageBody,
     InvalidMessageCursor,
     MessageDeleted,
@@ -26,6 +27,11 @@ class ErrorContract:
 
 
 ERROR_CONTRACTS: dict[type[MessagingError], ErrorContract] = {
+    ClientMessageConflict: ErrorContract(
+        409,
+        "client_message_conflict",
+        "The client message identifier is already used for different content.",
+    ),
     InvalidMessageBody: ErrorContract(422, "validation_error", "The message body is invalid."),
     InvalidMessageCursor: ErrorContract(
         422,

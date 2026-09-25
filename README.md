@@ -21,8 +21,41 @@ vertical slices.
 - Soft channel archival and durable workspace-containment guarantees for channel memberships.
 - Durable channel messages with explicit-membership access, history pagination, author edits, and
   content-erasing soft deletion.
+- Retry-safe client message IDs, message revisions, committed PostgreSQL events, and authenticated
+  cross-process WebSocket delivery.
 
-Realtime delivery, presence, and a frontend are not implemented yet.
+The Next.js frontend in [`frontend/`](frontend/README.md) implements the core workspace and
+messaging flows with desktop and mobile layouts, including threads, reactions, durable read
+positions, private one-to-one direct messages, and LiveKit voice calls. Presence and file sharing are not
+implemented yet.
+
+### Voice calls
+
+Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` in the root `.env` using your
+LiveKit Cloud project's credentials. These are backend-only settings. Apply migration
+`20260925_0008`, install the updated dependencies, and recreate the API with
+`docker compose up -d --build api`. No webhook or agent deployment is required.
+
+Open a direct message and choose **Start call**. The recipient receives an incoming-call popup
+anywhere in the signed-in app, with **Accept** and **Decline**. Accepted calls have microphone
+mute/unmute and **Hang up** controls and remain connected while navigating. The DM's **Calls**
+tab contains persistent history, including unanswered calls marked missed after 45 seconds.
+Browser microphone access requires localhost or HTTPS. Incoming calls require Klack to be open;
+this version does not send push notifications to closed browsers. Reloading the calling tab
+disconnects media; its abandoned call expires within 60 seconds. Another tab can end it.
+
+Call notifications poll the authenticated `/api/v1/calls` inbox every two seconds. Active media
+uses LiveKit directly; PostgreSQL stores only call metadata. The API checks conversation and
+session access, issues 60-second microphone-only room tokens, and reserves each participant for
+one call. An API maintenance task expires abandoned calls and retries media-room cleanup.
+Video, group calls, recordings, and voice-note attachments are outside this implementation.
+
+## Frontend development
+
+See [`frontend/README.md`](frontend/README.md) for setup and verification. Run `npm ci` followed by
+`npm run dev` inside `frontend`, then open `http://127.0.0.1:3000`. The backend must be running, with
+`AUTH_TRUSTED_ORIGIN` and `AUTH_PUBLIC_WEB_ORIGIN` both set to `http://127.0.0.1:3000`. The frontend
+forwards REST and WebSocket traffic to the API. Apply all backend migrations before starting it.
 
 ## Prerequisites
 
@@ -138,8 +171,46 @@ The versioned messaging routes are:
 History is returned newest first. Use the response's `next_before` value as the next request's
 `before` query parameter; page size defaults to 50 and is bounded at 100. Public-channel discovery
 does not grant message access: every operation requires current explicit channel membership.
-WebSocket delivery is deferred, so PostgreSQL-backed REST history is currently the recovery and
-refresh mechanism.
+Clients may supply `client_message_id` on creation and must reuse it when retrying an uncertain
+response. Messages expose a monotonic `revision` for deduplication and convergence.
+
+### Threads, reactions, read cursors, and direct messages
+
+- Set `parent_message_id` when creating a reply. List replies with
+  `GET .../messages?parent_message_id=<root-id>`, using the same `before` pagination.
+  The default history contains root messages only. Replies cannot have nested replies, and their
+  root must belong to the same channel. Deleted roots retain their threads.
+- Messages include `parent_message_id`, `reply_count`, and `reactions` (emoji/user-ID pairs).
+  `PUT|DELETE .../messages/{message_id}/reactions/{emoji}` adds/removes your reaction idempotently.
+  Supported reactions are 👍, ❤️, 😂, 🎉, 👀, and ✅. Archived channels and deleted messages reject
+  reaction changes. Replies and reaction changes use the existing committed realtime delivery.
+- `GET|PUT .../channels/{channel_id}/read-cursor` reads/advances your private cursor; PUT accepts
+  `{"message_id":"<uuid>"}`. Positions compare `(created_at, id)` and never move backward, including
+  concurrent requests. `unread_count` includes live roots and replies from other people after that
+  position. The UI marks visible conversations read at the bottom and refreshes badges every 15
+  seconds, on visibility changes, and after local reads. These are private positions, not shared
+  read receipts. Reading a later message acknowledges all earlier messages in that conversation.
+- `POST /api/v1/workspaces/{workspace_id}/direct-messages` accepts `{"user_id":"<uuid>"}` and opens
+  or returns the one-to-one conversation for that pair. GET lists only your direct conversations.
+  Both people must be current workspace members. Returned channel IDs work with the existing
+  messaging, reaction, read-cursor, and WebSocket endpoints.
+- DMs are excluded from channel discovery. Administrators cannot inspect, join, rename, archive,
+  make public, or change their participants. Workspace removal revokes access; explicitly reopening
+  the same pair after workspace rejoining restores participation and existing history.
+
+### Realtime API
+
+Connect to `GET /api/v1/realtime` with the `klack.realtime.v1` WebSocket subprotocol, the normal
+access cookie, and the exact trusted browser Origin. Message writes remain on REST. Subscribe with:
+
+```json
+{"type":"subscribe","request_id":"<uuid>","workspace_id":"<uuid>","channel_id":"<uuid>"}
+```
+
+Only current explicit channel members receive `message.changed` snapshots. Access-token expiry,
+session revocation, membership loss, listener failure, and slow-consumer limits close or revoke the
+affected stream. After reconnecting, subscribe first, buffer events, reload REST history, and merge
+by message ID and revision so there is no history-to-socket race.
 
 ### Swagger demo accounts
 
@@ -215,6 +286,9 @@ memberships, and manual invitation links. Revision `20260911_0004` adds channels
 memberships, visibility, and soft archival.
 Revision `20260911_0005` adds durable channel messages, history pagination indexes, and deletion
 tombstones.
+Revision `20260911_0006` adds client message IDs, message revisions, and body-free committed
+realtime events.
+Revision `20260925_0007` adds thread relationships, reactions, read cursors, and direct conversation keys.
 
 ```powershell
 uv run --project backend alembic -c backend/alembic.ini upgrade head

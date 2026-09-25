@@ -1,5 +1,6 @@
 """Async SQLAlchemy implementation of workspace persistence."""
 
+from dataclasses import replace
 from datetime import datetime
 from typing import cast
 from uuid import UUID
@@ -8,6 +9,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from klack.modules.identity.infrastructure.models import UserRecord
 from klack.modules.workspaces.application.ports import WorkspaceConflict
 from klack.modules.workspaces.domain.entities import (
     Workspace,
@@ -98,13 +100,17 @@ class SqlAlchemyWorkspaceRepository:
         workspace_id: UUID,
     ) -> list[WorkspaceMembership]:
         records = (
-            await self._session.scalars(
-                select(MembershipRecord)
+            await self._session.execute(
+                select(MembershipRecord, UserRecord.email)
+                .join(UserRecord, UserRecord.id == MembershipRecord.user_id)
                 .where(MembershipRecord.workspace_id == workspace_id)
                 .order_by(MembershipRecord.joined_at, MembershipRecord.user_id),
             )
         ).all()
-        return [self._membership(record) for record in records]
+        return [
+            replace(self._membership(record), display_name=email.split("@", 1)[0], email=email)
+            for record, email in records
+        ]
 
     async def count_memberships_by_role(
         self,

@@ -297,12 +297,14 @@ def expected_workspace(workspace: Workspace) -> dict[str, str]:
     }
 
 
-def expected_membership(membership: WorkspaceMembership) -> dict[str, str]:
+def expected_membership(membership: WorkspaceMembership) -> dict[str, str | None]:
     return {
         "workspace_id": str(membership.workspace_id),
         "user_id": str(membership.user_id),
         "role": membership.role.value,
         "joined_at": timestamp(membership.joined_at),
+        "display_name": membership.display_name,
+        "email": membership.email,
     }
 
 

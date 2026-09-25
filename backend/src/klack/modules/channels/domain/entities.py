@@ -26,6 +26,7 @@ class Channel:
     updated_at: datetime
     archived_at: datetime | None
     archived_by_user_id: UUID | None
+    direct_key: str | None = None
 
     @property
     def is_archived(self) -> bool:

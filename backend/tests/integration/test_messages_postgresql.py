@@ -4,15 +4,16 @@ import asyncio
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import asyncpg
 import pytest
 from alembic import command
 from alembic.config import Config
 from pydantic import SecretStr
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from klack.core.config import AppEnvironment, Settings
@@ -27,11 +28,18 @@ from klack.modules.channels.infrastructure.models import (
     ChannelRecord,
 )
 from klack.modules.channels.infrastructure.repository import SqlAlchemyChannelRepository
-from klack.modules.identity.infrastructure.models import UserRecord
+from klack.modules.identity.infrastructure.models import AuthSessionRecord, UserRecord
 from klack.modules.messaging.application.service import MessageService
 from klack.modules.messaging.domain.entities import Message
 from klack.modules.messaging.infrastructure.models import MessageRecord
 from klack.modules.messaging.infrastructure.repository import SqlAlchemyMessageRepository
+from klack.modules.realtime.application.connections import RealtimeConnectionManager
+from klack.modules.realtime.infrastructure.broker import PostgresRealtimeBroker
+from klack.modules.realtime.infrastructure.models import RealtimeEventRecord
+from klack.modules.realtime.infrastructure.repository import (
+    REALTIME_NOTIFY_CHANNEL,
+    SqlAlchemyRealtimeEventRepository,
+)
 from klack.modules.workspaces.application.service import WorkspaceAccessService
 from klack.modules.workspaces.domain.errors import WorkspaceNotFound
 from klack.modules.workspaces.infrastructure.models import MembershipRecord, WorkspaceRecord
@@ -86,7 +94,12 @@ async def message_container(migrated_message_schema: None) -> AsyncIterator[AppC
         await container.engine.dispose()
 
 
-def _message_service(container: AppContainer, session: AsyncSession) -> MessageService:
+def _message_service(
+    container: AppContainer,
+    session: AsyncSession,
+    *,
+    realtime: bool = False,
+) -> MessageService:
     return MessageService(
         repository=SqlAlchemyMessageRepository(session),
         channel_access=ChannelContentAccessService(
@@ -94,6 +107,7 @@ def _message_service(container: AppContainer, session: AsyncSession) -> MessageS
             workspace_access=WorkspaceAccessService(SqlAlchemyWorkspaceRepository(session)),
         ),
         policy=container.message_policy,
+        event_writer=SqlAlchemyRealtimeEventRepository(session) if realtime else None,
     )
 
 
@@ -186,6 +200,11 @@ async def _seed_conversation(container: AppContainer) -> SeededConversation:
 async def _cleanup(container: AppContainer, seeded: SeededConversation) -> None:
     async with container.session_factory() as session:
         await session.execute(
+            delete(RealtimeEventRecord).where(
+                RealtimeEventRecord.workspace_id == seeded.workspace_id,
+            ),
+        )
+        await session.execute(
             delete(WorkspaceRecord).where(WorkspaceRecord.id == seeded.workspace_id),
         )
         await session.execute(
@@ -234,6 +253,201 @@ async def test_membership_removal_revokes_access_without_deleting_authored_histo
                     channel_id=seeded.channel_id,
                 )
     finally:
+        await _cleanup(message_container, seeded)
+
+
+async def test_committed_notification_and_idempotent_retry_have_one_event(
+    message_container: AppContainer,
+) -> None:
+    seeded = await _seed_conversation(message_container)
+    notifications: asyncio.Queue[str] = asyncio.Queue()
+    dsn = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://", 1)
+    listener = await asyncpg.connect(dsn)
+    await listener.add_listener(
+        REALTIME_NOTIFY_CHANNEL,
+        lambda _connection, _pid, _channel, payload: notifications.put_nowait(payload),
+    )
+    try:
+        client_message_id = uuid4()
+        async with message_container.session_factory() as session:
+            created = await _message_service(
+                message_container,
+                session,
+                realtime=True,
+            ).create_message(
+                actor_user_id=seeded.member_id,
+                workspace_id=seeded.workspace_id,
+                channel_id=seeded.channel_id,
+                body="one committed event",
+                client_message_id=client_message_id,
+            )
+        event_id = UUID(await asyncio.wait_for(notifications.get(), timeout=2))
+        async with message_container.session_factory() as session:
+            event = await session.get(RealtimeEventRecord, event_id)
+            assert event is not None
+            assert event.entity_id == created.id
+            assert event.entity_revision == 1
+            assert event.event_type == "message.changed"
+
+        async with message_container.session_factory() as session:
+            replayed = await _message_service(
+                message_container,
+                session,
+                realtime=True,
+            ).create_message(
+                actor_user_id=seeded.member_id,
+                workspace_id=seeded.workspace_id,
+                channel_id=seeded.channel_id,
+                body="one committed event",
+                client_message_id=client_message_id,
+            )
+        assert replayed.id == created.id
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(notifications.get(), timeout=0.2)
+    finally:
+        await listener.close()
+        await _cleanup(message_container, seeded)
+
+
+async def test_rolled_back_realtime_event_is_not_notified(
+    message_container: AppContainer,
+) -> None:
+    seeded = await _seed_conversation(message_container)
+    notifications: asyncio.Queue[str] = asyncio.Queue()
+    dsn = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://", 1)
+    listener = await asyncpg.connect(dsn)
+    await listener.add_listener(
+        REALTIME_NOTIFY_CHANNEL,
+        lambda _connection, _pid, _channel, payload: notifications.put_nowait(payload),
+    )
+    try:
+        message = Message(
+            id=uuid4(),
+            workspace_id=seeded.workspace_id,
+            channel_id=seeded.channel_id,
+            author_user_id=seeded.member_id,
+            body="must not escape",
+            created_at=datetime.now(UTC),
+            edited_at=None,
+            deleted_at=None,
+        )
+        async with message_container.session_factory() as session:
+            await SqlAlchemyRealtimeEventRepository(session).append_message_changed(message)
+            await session.rollback()
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(notifications.get(), timeout=0.2)
+        async with message_container.session_factory() as session:
+            assert (
+                await session.scalar(
+                    select(RealtimeEventRecord).where(
+                        RealtimeEventRecord.entity_id == message.id,
+                    ),
+                )
+                is None
+            )
+    finally:
+        await listener.close()
+        await _cleanup(message_container, seeded)
+
+
+async def test_postgres_broker_fans_out_and_rechecks_membership(
+    message_container: AppContainer,
+) -> None:
+    seeded = await _seed_conversation(message_container)
+    now = datetime.now(UTC)
+    session_id = uuid4()
+    async with message_container.session_factory() as session:
+        session.add(
+            AuthSessionRecord(
+                id=session_id,
+                user_id=seeded.member_id,
+                csrf_token_hash="0" * 64,
+                created_at=now,
+                last_seen_at=now,
+                expires_at=now + timedelta(hours=1),
+                revoked_at=None,
+                revocation_reason=None,
+                created_ip=None,
+                last_ip=None,
+                user_agent="realtime integration test",
+            ),
+        )
+        await session.commit()
+
+    manager = RealtimeConnectionManager(queue_size=8, max_connections=8)
+    broker = PostgresRealtimeBroker(
+        database_url=message_container.settings.database_url_value(),
+        session_factory=message_container.session_factory,
+        manager=manager,
+        enabled=True,
+        retry_seconds=0.1,
+        authorization_recheck_seconds=60,
+        event_retention_seconds=86_400,
+        cleanup_interval_seconds=3_600,
+        cleanup_batch_size=100,
+    )
+    connection = manager.register(
+        websocket=object(),  # type: ignore[arg-type]
+        user_id=seeded.member_id,
+        session_id=session_id,
+        access_expires_at=now + timedelta(minutes=15),
+    )
+    assert connection is not None
+    manager.subscribe(
+        connection,
+        workspace_id=seeded.workspace_id,
+        channel_id=seeded.channel_id,
+        max_subscriptions=1,
+    )
+    await broker.start()
+    try:
+        for _ in range(100):
+            if broker.ready:
+                break
+            await asyncio.sleep(0.01)
+        assert broker.ready
+        async with message_container.session_factory() as session:
+            created = await _message_service(
+                message_container,
+                session,
+                realtime=True,
+            ).create_message(
+                actor_user_id=seeded.owner_id,
+                workspace_id=seeded.workspace_id,
+                channel_id=seeded.channel_id,
+                body="cross-process delivery",
+            )
+        delivered = await asyncio.wait_for(connection.outbound.get(), timeout=2)
+        assert delivered is not None
+        assert delivered["type"] == "message.changed"
+        assert delivered["message"]["id"] == str(created.id)  # type: ignore[index]
+
+        async with message_container.session_factory() as session:
+            await session.execute(
+                delete(ChannelMembershipRecord).where(
+                    ChannelMembershipRecord.channel_id == seeded.channel_id,
+                    ChannelMembershipRecord.user_id == seeded.member_id,
+                ),
+            )
+            await session.commit()
+        async with message_container.session_factory() as session:
+            await _message_service(
+                message_container,
+                session,
+                realtime=True,
+            ).create_message(
+                actor_user_id=seeded.owner_id,
+                workspace_id=seeded.workspace_id,
+                channel_id=seeded.channel_id,
+                body="not for removed member",
+            )
+        revoked = await asyncio.wait_for(connection.outbound.get(), timeout=2)
+        assert revoked == {
+            "type": "subscription.revoked",
+            "channel_id": str(seeded.channel_id),
+        }
+    finally:
+        await broker.stop()
         await _cleanup(message_container, seeded)
 
 

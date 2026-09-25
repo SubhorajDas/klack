@@ -16,6 +16,7 @@ from klack.modules.messaging.api.dependencies import get_message_service
 from klack.modules.messaging.application.service import MessagePage
 from klack.modules.messaging.domain.entities import Message
 from klack.modules.messaging.domain.errors import (
+    ClientMessageConflict,
     InvalidMessageBody,
     InvalidMessageCursor,
     MessageDeleted,
@@ -161,6 +162,8 @@ async def test_message_routes_map_requests_and_responses(message_api: MessageApi
     assert created.status_code == 201
     assert created.json()["id"] == str(MESSAGE_ID)
     assert created.json()["body"] == "hello"
+    assert created.json()["revision"] == 1
+    assert created.json()["client_message_id"] is None
     assert_no_store(created)
 
     listed = await message_api.client.get(f"{base}?before={OLDER_ID}&limit=25")
@@ -198,6 +201,28 @@ async def test_message_routes_map_requests_and_responses(message_api: MessageApi
     ]
     assert message_api.service.calls["delete_message"] == [
         {**common, "message_id": MESSAGE_ID},
+    ]
+
+
+async def test_create_maps_client_message_id_for_retry_reconciliation(
+    message_api: MessageApiHarness,
+) -> None:
+    message_api.authenticate()
+    client_message_id = UUID(int=50)
+    response = await message_api.client.post(
+        f"/api/v1/workspaces/{WORKSPACE_ID}/channels/{CHANNEL_ID}/messages",
+        headers=message_api.mutation_headers(),
+        json={"body": "hello", "client_message_id": str(client_message_id)},
+    )
+    assert response.status_code == 201
+    assert message_api.service.calls["create_message"] == [
+        {
+            "actor_user_id": USER_ID,
+            "workspace_id": WORKSPACE_ID,
+            "channel_id": CHANNEL_ID,
+            "body": "hello",
+            "client_message_id": client_message_id,
+        },
     ]
 
 
@@ -251,6 +276,7 @@ async def test_history_query_validation_is_bounded(message_api: MessageApiHarnes
         (MessageNotFound(), 404, "message_not_found"),
         (MessagePermissionDenied(), 403, "message_permission_denied"),
         (MessageDeleted(), 409, "message_deleted"),
+        (ClientMessageConflict(), 409, "client_message_conflict"),
     ],
 )
 async def test_expected_message_errors_use_problem_details(

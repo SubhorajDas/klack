@@ -111,6 +111,10 @@ class Settings(DatabaseSettings):
 
     healthcheck_timeout_seconds: PositiveFloat = 2.0
 
+    livekit_url: str = ""
+    livekit_api_key: SecretStr = SecretStr("")
+    livekit_api_secret: SecretStr = SecretStr("")
+
     auth_jwt_secret: SecretLength
     auth_refresh_secret: SecretLength
     auth_action_secret: SecretLength
@@ -136,6 +140,19 @@ class Settings(DatabaseSettings):
     auth_email_action_rate_limit: Annotated[int, Field(ge=1, le=100)] = 5
     auth_action_complete_rate_limit: Annotated[int, Field(ge=1, le=100)] = 10
     workspace_invitation_ttl_seconds: Annotated[int, Field(ge=900, le=2_592_000)] = 604_800
+
+    realtime_enabled: bool = False
+    realtime_max_connections: Annotated[int, Field(ge=1, le=100_000)] = 2_000
+    realtime_max_subscriptions_per_connection: Annotated[int, Field(ge=1, le=1_000)] = 100
+    realtime_outbound_queue_size: Annotated[int, Field(ge=1, le=10_000)] = 256
+    realtime_max_frame_bytes: Annotated[int, Field(ge=1_024, le=1_048_576)] = 16_384
+    realtime_heartbeat_seconds: Annotated[int, Field(ge=5, le=300)] = 30
+    realtime_listener_retry_seconds: Annotated[float, Field(ge=0.1, le=60)] = 2.0
+    realtime_authorization_recheck_seconds: Annotated[int, Field(ge=5, le=300)] = 30
+    realtime_event_retention_seconds: Annotated[int, Field(ge=3_600, le=2_592_000)] = 86_400
+    realtime_cleanup_interval_seconds: Annotated[int, Field(ge=60, le=86_400)] = 3_600
+    realtime_cleanup_batch_size: Annotated[int, Field(ge=1, le=10_000)] = 1_000
+    realtime_commands_per_minute: Annotated[int, Field(ge=1, le=10_000)] = 120
 
     smtp_host: str | None = None
     smtp_port: Annotated[int, Field(ge=1, le=65_535)] = 587

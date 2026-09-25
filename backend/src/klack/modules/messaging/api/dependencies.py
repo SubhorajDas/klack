@@ -10,6 +10,7 @@ from klack.modules.channels.application.service import ChannelContentAccessServi
 from klack.modules.channels.infrastructure.repository import SqlAlchemyChannelRepository
 from klack.modules.messaging.application.service import MessageService
 from klack.modules.messaging.infrastructure.repository import SqlAlchemyMessageRepository
+from klack.modules.realtime.infrastructure.repository import SqlAlchemyRealtimeEventRepository
 from klack.modules.workspaces.application.service import WorkspaceAccessService
 from klack.modules.workspaces.infrastructure.repository import SqlAlchemyWorkspaceRepository
 
@@ -27,6 +28,11 @@ async def get_message_service(
             workspace_access=WorkspaceAccessService(SqlAlchemyWorkspaceRepository(session)),
         ),
         policy=container.message_policy,
+        event_writer=(
+            SqlAlchemyRealtimeEventRepository(session)
+            if container.settings.realtime_enabled
+            else None
+        ),
     )
 
 

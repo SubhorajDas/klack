@@ -24,6 +24,7 @@ from klack.modules.messaging.application.service import (
 )
 from klack.modules.messaging.domain.entities import Message
 from klack.modules.messaging.domain.errors import (
+    ClientMessageConflict,
     InvalidMessageBody,
     InvalidMessageCursor,
     MessageDeleted,
@@ -103,6 +104,35 @@ class MemoryMessageRepository:
     async def add_message(self, message: Message) -> None:
         self.messages[message.id] = message
 
+    async def add_message_idempotently(self, message: Message) -> bool:
+        existing = await self.get_message_by_client_id(
+            channel_id=message.channel_id,
+            author_user_id=message.author_user_id,
+            client_message_id=message.client_message_id or UUID(int=0),
+        )
+        if existing is not None:
+            return False
+        self.messages[message.id] = message
+        return True
+
+    async def get_message_by_client_id(
+        self,
+        *,
+        channel_id: UUID,
+        author_user_id: UUID,
+        client_message_id: UUID,
+    ) -> Message | None:
+        return next(
+            (
+                message
+                for message in self.messages.values()
+                if message.channel_id == channel_id
+                and message.author_user_id == author_user_id
+                and message.client_message_id == client_message_id
+            ),
+            None,
+        )
+
     async def get_message(
         self,
         *,
@@ -146,12 +176,14 @@ class MemoryMessageRepository:
         body: str | None,
         edited_at: datetime | None,
         deleted_at: datetime | None,
+        revision: int,
     ) -> None:
         self.messages[message_id] = replace(
             self.messages[message_id],
             body=body,
             edited_at=edited_at,
             deleted_at=deleted_at,
+            revision=revision,
         )
 
     async def commit(self) -> None:
@@ -161,13 +193,23 @@ class MemoryMessageRepository:
         self.rollback_count += 1
 
 
+class RecordingEventWriter:
+    def __init__(self) -> None:
+        self.messages: list[Message] = []
+
+    async def append_message_changed(self, message: Message) -> None:
+        self.messages.append(message)
+
+
 def service(
     repository: MemoryMessageRepository,
     access: FakeChannelAccess | None = None,
+    event_writer: RecordingEventWriter | None = None,
 ) -> MessageService:
     return MessageService(
         repository=repository,
         channel_access=access or FakeChannelAccess(),
+        event_writer=event_writer,
         clock=lambda: NOW,
         uuid_factory=lambda: MESSAGE_ID,
     )
@@ -210,6 +252,68 @@ async def test_create_preserves_body_and_commits_after_locked_access() -> None:
     assert repository.messages[MESSAGE_ID] == message
     assert repository.commit_count == 1
     assert access.calls == [(ACTOR_ID, WORKSPACE_ID, CHANNEL_ID, True)]
+
+
+async def test_client_message_id_is_idempotent_and_rejects_different_content() -> None:
+    repository = MemoryMessageRepository()
+    events = RecordingEventWriter()
+    client_message_id = UUID(int=90)
+    subject = service(repository, event_writer=events)
+    created = await subject.create_message(
+        actor_user_id=ACTOR_ID,
+        workspace_id=WORKSPACE_ID,
+        channel_id=CHANNEL_ID,
+        body="retry-safe",
+        client_message_id=client_message_id,
+    )
+    replayed = await subject.create_message(
+        actor_user_id=ACTOR_ID,
+        workspace_id=WORKSPACE_ID,
+        channel_id=CHANNEL_ID,
+        body="retry-safe",
+        client_message_id=client_message_id,
+    )
+    assert replayed == created
+    assert created.client_message_id == client_message_id
+    assert repository.commit_count == 1
+    assert events.messages == [created]
+    with pytest.raises(ClientMessageConflict):
+        await subject.create_message(
+            actor_user_id=ACTOR_ID,
+            workspace_id=WORKSPACE_ID,
+            channel_id=CHANNEL_ID,
+            body="different",
+            client_message_id=client_message_id,
+        )
+
+
+async def test_message_events_follow_real_state_changes_and_revisions() -> None:
+    repository = MemoryMessageRepository()
+    events = RecordingEventWriter()
+    subject = service(repository, event_writer=events)
+    created = await subject.create_message(
+        actor_user_id=ACTOR_ID,
+        workspace_id=WORKSPACE_ID,
+        channel_id=CHANNEL_ID,
+        body="created",
+    )
+    edited = await subject.edit_message(
+        actor_user_id=ACTOR_ID,
+        workspace_id=WORKSPACE_ID,
+        channel_id=CHANNEL_ID,
+        message_id=MESSAGE_ID,
+        body="edited",
+    )
+    await subject.delete_message(
+        actor_user_id=ACTOR_ID,
+        workspace_id=WORKSPACE_ID,
+        channel_id=CHANNEL_ID,
+        message_id=MESSAGE_ID,
+    )
+    assert created.revision == 1
+    assert edited.revision == 2
+    assert [message.revision for message in events.messages] == [1, 2, 3]
+    assert events.messages[-1].body is None
 
 
 async def test_create_rejects_archived_channel_and_rolls_back() -> None:

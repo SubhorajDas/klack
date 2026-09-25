@@ -91,6 +91,8 @@ class MembershipResponse(BaseModel):
     user_id: UUID
     role: WorkspaceRole
     joined_at: datetime
+    display_name: str | None = None
+    email: str | None = None
 
     @classmethod
     def from_domain(cls, membership: WorkspaceMembership) -> Self:
@@ -99,6 +101,8 @@ class MembershipResponse(BaseModel):
             user_id=membership.user_id,
             role=membership.role,
             joined_at=membership.joined_at,
+            display_name=membership.display_name,
+            email=membership.email,
         )
 
 

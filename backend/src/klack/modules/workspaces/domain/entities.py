@@ -33,6 +33,8 @@ class WorkspaceMembership:
     user_id: UUID
     role: WorkspaceRole
     joined_at: datetime
+    display_name: str | None = None
+    email: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

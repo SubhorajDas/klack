@@ -3,9 +3,11 @@
 Future feature model modules must be imported here before `target_metadata` is evaluated.
 """
 
+import klack.modules.calling.models
 import klack.modules.channels.infrastructure.models
 import klack.modules.identity.infrastructure.models
 import klack.modules.messaging.infrastructure.models
+import klack.modules.realtime.infrastructure.models
 import klack.modules.workspaces.infrastructure.models  # noqa: F401
 from klack.core.db.base import Base
 

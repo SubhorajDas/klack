@@ -173,6 +173,14 @@ async def test_workspace_and_membership_crud_with_fk_cascade(
     await repository.commit()
 
     memberships = await repository.list_memberships(workspace_id=workspace.id)
+    assert [item.email for item in memberships] == [
+        "workspace-unit+1@example.com",
+        "workspace-unit+2@example.com",
+    ]
+    assert [item.display_name for item in memberships] == [
+        "workspace-unit+1",
+        "workspace-unit+2",
+    ]
     assert [(item.user_id, item.role) for item in memberships] == [
         (OWNER_ID, WorkspaceRole.OWNER),
         (MEMBER_ID, WorkspaceRole.MEMBER),

@@ -22,6 +22,8 @@ from klack.modules.identity.infrastructure.security import (
     SessionTokenManager,
 )
 from klack.modules.messaging.application.service import MessagePolicy
+from klack.modules.realtime.application.connections import RealtimeConnectionManager
+from klack.modules.realtime.infrastructure.broker import PostgresRealtimeBroker
 from klack.modules.workspaces.application.service import WorkspacePolicy
 from klack.modules.workspaces.infrastructure.invitation_security import (
     InvitationTokenManager,
@@ -45,6 +47,7 @@ class AppContainer:
     workspace_policy: WorkspacePolicy
     channel_policy: ChannelPolicy
     message_policy: MessagePolicy
+    realtime_broker: PostgresRealtimeBroker
 
 
 def build_container(
@@ -58,6 +61,21 @@ def build_container(
     health_check = database_health_check or create_database_health_check(
         engine,
         timeout_seconds=settings.healthcheck_timeout_seconds,
+    )
+    realtime_manager = RealtimeConnectionManager(
+        queue_size=settings.realtime_outbound_queue_size,
+        max_connections=settings.realtime_max_connections,
+    )
+    realtime_broker = PostgresRealtimeBroker(
+        database_url=settings.database_url_value(),
+        session_factory=session_factory,
+        manager=realtime_manager,
+        enabled=settings.realtime_enabled,
+        retry_seconds=settings.realtime_listener_retry_seconds,
+        authorization_recheck_seconds=settings.realtime_authorization_recheck_seconds,
+        event_retention_seconds=settings.realtime_event_retention_seconds,
+        cleanup_interval_seconds=settings.realtime_cleanup_interval_seconds,
+        cleanup_batch_size=settings.realtime_cleanup_batch_size,
     )
     return AppContainer(
         settings=settings,
@@ -112,4 +130,5 @@ def build_container(
         ),
         channel_policy=ChannelPolicy(),
         message_policy=MessagePolicy(),
+        realtime_broker=realtime_broker,
     )

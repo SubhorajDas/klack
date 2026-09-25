@@ -9,6 +9,10 @@ class InvalidMessageBody(MessagingError, ValueError):
     """The supplied message body violates the supported bounds."""
 
 
+class ClientMessageConflict(MessagingError):
+    """A client message identifier was reused for different content."""
+
+
 class MessageNotFound(MessagingError):
     """The requested message is absent from the addressed channel."""
 

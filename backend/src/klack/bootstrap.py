@@ -1,7 +1,8 @@
 """Application construction and process lifecycle wiring."""
 
+import asyncio
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 import structlog
 from fastapi import FastAPI
@@ -18,6 +19,8 @@ from klack.core.errors import unhandled_exception_handler
 from klack.core.logging import configure_logging
 from klack.core.middleware.request_context import RequestContextMiddleware
 from klack.core.problems import request_validation_exception_handler
+from klack.modules.calling.service import configured
+from klack.modules.calling.worker import run_call_maintenance
 from klack.modules.channels.api.errors import channel_exception_handler
 from klack.modules.channels.domain.errors import ChannelError
 from klack.modules.identity.api.errors import identity_exception_handler
@@ -45,9 +48,20 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.info("application_started")
+        await container.realtime_broker.start()
+        calls_task = (
+            asyncio.create_task(run_call_maintenance(container.session_factory, resolved_settings))
+            if configured(resolved_settings)
+            else None
+        )
         try:
             yield
         finally:
+            if calls_task:
+                calls_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await calls_task
+            await container.realtime_broker.stop()
             await container.engine.dispose()
             logger.info("application_stopped")
 

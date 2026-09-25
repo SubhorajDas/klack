@@ -418,6 +418,7 @@ def expected_channel(view: ChannelView) -> dict[str, object]:
             str(channel.archived_by_user_id) if channel.archived_by_user_id else None
         ),
         "is_member": view.is_member,
+        "direct_key": channel.direct_key,
     }
 
 

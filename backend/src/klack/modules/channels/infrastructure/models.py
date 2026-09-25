@@ -37,6 +37,8 @@ class ChannelRecord(Base):
             name="archival_timestamp_actor_pair",
         ),
         UniqueConstraint("workspace_id", "name"),
+        UniqueConstraint("workspace_id", "direct_key"),
+        CheckConstraint("direct_key IS NULL OR visibility = 'private'", name="direct_is_private"),
         UniqueConstraint("workspace_id", "id"),
         Index(
             "ix_channel_channels_workspace_id_archived_at_name",
@@ -45,6 +47,8 @@ class ChannelRecord(Base):
             "name",
         ),
     )
+
+    direct_key: Mapped[str | None] = mapped_column(String(65))
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     workspace_id: Mapped[UUID] = mapped_column(
