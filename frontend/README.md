@@ -2,6 +2,31 @@
 
 Next.js App Router, React, and TypeScript frontend based on the supplied desktop/mobile UI references. All application data comes from the existing FastAPI API. Apply backend migrations through `20260925_0008` before starting the frontend.
 
+See the [full-app quick start](../README.md#quick-start), [API contracts](../docs/api.md), and
+[system architecture](../docs/architecture/README.md) for the backend and runtime context.
+
+## Source map and state ownership
+
+| Location | Responsibility |
+| --- | --- |
+| `src/app/[[...path]]/page.tsx` | App Router catch-all page |
+| `src/components/app.tsx` | Session bootstrap, authentication routing, signed-in call-provider lifetime |
+| `src/components/workspace-app.tsx` | Workspace shell, navigation, and unread refresh |
+| `src/components/conversation.tsx` | Messages, thread UI, composer, tab-local drafts, and retry-safe sends |
+| `src/components/direct-messages.tsx` | DM inbox, selection, and search |
+| `src/components/calls.tsx` | Global call inbox, controls, LiveKit media, and heartbeat cleanup |
+| `src/lib/api.ts` | HTTP requests, CSRF headers, and session recovery |
+| `src/lib/use-conversation.ts` | History loading, pagination, realtime reconciliation, and reconnects |
+| `src/lib/messages.ts` | Merge by ID/revision and order messages |
+| `next.config.ts` | Same-origin API forwarding |
+| `tests/` | Browser scenarios and isolated HTTP/WebSocket fixtures |
+
+PostgreSQL-backed API responses own durable state. Message WebSockets deliver snapshots, while
+call notifications use a separate HTTP inbox and voice media connects directly to LiveKit.
+The global call provider survives conversation navigation; reloading the page ends its media
+connection. Drafts and uncertain sends are tab-local and isolated by conversation and user.
+For request and recovery flows, see the [architecture guide](../docs/architecture/README.md).
+
 ## Run locally
 
 Use Node.js 22.12+ (tested with 24.11). From this directory:
