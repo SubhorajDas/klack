@@ -5,6 +5,7 @@ import os
 from uuid import UUID
 
 import pytest
+from sqlalchemy import delete
 from test_messages_postgresql import _message_service, _seed_conversation
 from test_messages_postgresql import message_container as message_container
 from test_messages_postgresql import (
@@ -13,6 +14,7 @@ from test_messages_postgresql import (
 
 from klack.core.container import AppContainer
 from klack.modules.channels.application.service import ChannelContentAccessService
+from klack.modules.channels.infrastructure.models import ChannelMembershipRecord
 from klack.modules.channels.infrastructure.repository import SqlAlchemyChannelRepository
 from klack.modules.messaging.application.conversations import ConversationService
 from klack.modules.messaging.infrastructure.conversations import SqlAlchemyConversationRepository
@@ -101,3 +103,63 @@ async def test_concurrent_direct_creation_reactions_and_cursors(message_containe
         assert page.messages[0].reply_count == 4
         assert len(page.messages[0].reactions) == 2
         assert page.messages[0].revision == 7
+
+
+async def test_alerts_postgresql_threads_read_snapshot_and_membership(
+    message_container: AppContainer,
+):
+    container = message_container
+    seeded = await _seed_conversation(container)
+    other = await _seed_conversation(container)
+    async with container.session_factory() as session:
+        service = _message_service(container, session)
+        root = await service.create_message(
+            actor_user_id=seeded.owner_id,
+            workspace_id=seeded.workspace_id,
+            channel_id=seeded.channel_id,
+            body="Unread root",
+        )
+        reply = await service.create_message(
+            actor_user_id=seeded.owner_id,
+            workspace_id=seeded.workspace_id,
+            channel_id=seeded.channel_id,
+            body="Unread thread reply",
+            parent_message_id=root.id,
+        )
+        await service.create_message(
+            actor_user_id=other.owner_id,
+            workspace_id=other.workspace_id,
+            channel_id=other.channel_id,
+            body="Another workspace",
+        )
+        alerts = await conversation(session).alerts(seeded.workspace_id, seeded.member_id)
+        assert len(alerts) == 1
+        channel, preview, count = alerts[0]
+        assert channel.channel.id == seeded.channel_id
+        assert preview.id == reply.id and preview.parent_message_id == root.id
+        assert count == 2
+        assert await conversation(session).alerts(seeded.workspace_id, seeded.owner_id) == []
+    # A message committed after the displayed snapshot must survive marking it read.
+    async with container.session_factory() as session:
+        newest = await _message_service(container, session).create_message(
+            actor_user_id=seeded.owner_id,
+            workspace_id=seeded.workspace_id,
+            channel_id=seeded.channel_id,
+            body="Arrived later",
+        )
+    async with container.session_factory() as session:
+        await conversation(session).read_state(
+            seeded.workspace_id, seeded.channel_id, seeded.member_id, reply.id
+        )
+    async with container.session_factory() as session:
+        alerts = await conversation(session).alerts(seeded.workspace_id, seeded.member_id)
+        assert len(alerts) == 1 and alerts[0][1].id == newest.id and alerts[0][2] == 1
+        await session.execute(
+            delete(ChannelMembershipRecord).where(
+                ChannelMembershipRecord.channel_id == seeded.channel_id,
+                ChannelMembershipRecord.user_id == seeded.member_id,
+            )
+        )
+        await session.commit()
+    async with container.session_factory() as session:
+        assert await conversation(session).alerts(seeded.workspace_id, seeded.member_id) == []

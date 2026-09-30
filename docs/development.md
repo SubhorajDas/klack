@@ -83,7 +83,7 @@ Run the quality gates from the repository root:
 uv run --project backend ruff format --check backend
 uv run --project backend ruff check backend
 uv run --project backend mypy backend/src
-uv run --project backend pytest backend/tests
+uv run --project backend pytest backend/tests --cov-config=backend/pyproject.toml
 uv build --project backend
 docker compose --env-file .env.example config --quiet
 ```

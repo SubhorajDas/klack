@@ -16,7 +16,7 @@ See the [full-app quick start](../README.md#quick-start), [development commands]
 | `src/klack/modules/` | Identity, workspaces, channels, messaging, realtime, calling |
 | `src/klack/identity_worker.py` | Separate email-outbox and identity-cleanup process |
 | `src/klack/dev_seed.py` | Explicit development fixtures |
-| `alembic/versions/` | Ordered schema migrations through `20260925_0008` |
+| `alembic/versions/` | Ordered schema migrations through `20260928_0009` |
 | `tests/unit/`, `tests/api/`, `tests/integration/` | Isolated rules, HTTP contracts, and real PostgreSQL behavior |
 
 ## Implementation guarantees
@@ -89,3 +89,6 @@ the API's Origin or session-bound CSRF checks.
 Switch the trusted origin back to port 3000 for frontend mutations, then recreate the API.
 See [browser origins](../docs/development.md#browser-origins) and
 [operations](../docs/operations.md) for configuration and process supervision.
+
+File sharing lives in `src/klack/modules/files`; revision `20260928_0009` adds upload reservations
+and attachment links. Run `klack-files-worker` alongside the API. See [file operations](../docs/files.md).

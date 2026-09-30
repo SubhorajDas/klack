@@ -23,6 +23,8 @@ from klack.modules.calling.service import configured
 from klack.modules.calling.worker import run_call_maintenance
 from klack.modules.channels.api.errors import channel_exception_handler
 from klack.modules.channels.domain.errors import ChannelError
+from klack.modules.files.domain import FileError
+from klack.modules.files.router import file_exception_handler
 from klack.modules.identity.api.errors import identity_exception_handler
 from klack.modules.identity.domain.errors import IdentityError
 from klack.modules.messaging.api.errors import messaging_exception_handler
@@ -75,12 +77,14 @@ def create_app(
         swagger_ui_oauth2_redirect_url=None,
     )
     app.state.container = container
+    app.state.files_io_gate = asyncio.Semaphore(4)
     app.add_middleware(RequestContextMiddleware)
     app.add_exception_handler(RequestValidationError, request_validation_exception_handler)
     app.add_exception_handler(IdentityError, identity_exception_handler)
     app.add_exception_handler(WorkspaceError, workspace_exception_handler)
     app.add_exception_handler(ChannelError, channel_exception_handler)
     app.add_exception_handler(MessagingError, messaging_exception_handler)
+    app.add_exception_handler(FileError, file_exception_handler)
     app.add_exception_handler(Exception, unhandled_exception_handler)
     app.include_router(health_router)
     app.include_router(create_api_router(prefix=resolved_settings.api_v1_prefix))

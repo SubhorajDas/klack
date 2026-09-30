@@ -35,6 +35,7 @@ import { MemberNamesProvider } from '@/lib/member-names';
 import { DirectMessages, Unread } from './direct-messages';
 import { Conversation } from './conversation';
 import { People, Account } from './management';
+import { Alerts } from './alerts';
 
 type View = 'home' | 'channels' | 'people' | 'settings' | 'dms' | 'activity' | 'saved' | 'channel';
 type Dialog =
@@ -193,7 +194,7 @@ export function WorkspaceApp({
   const navItems = [
     { key: 'home', label: 'Home', icon: Home },
     { key: 'dms', label: 'Direct messages', icon: MessageCircle },
-    { key: 'activity', label: 'Activity', icon: Bell },
+    { key: 'activity', label: 'Alerts', icon: Bell },
     { key: 'saved', label: 'Saved', icon: Bookmark },
   ] as const;
   if (loading && !workspaces.length)
@@ -230,9 +231,7 @@ export function WorkspaceApp({
                 >
                   <item.icon size={20} />
                   {item.label}
-                  {['activity', 'saved'].includes(item.key) && (
-                    <span className="nav-soon">Soon</span>
-                  )}
+                  {item.key === 'saved' && <span className="nav-soon">Soon</span>}
                 </button>
               ))}
             {workspace && (
@@ -341,21 +340,30 @@ export function WorkspaceApp({
                   aria-label={
                     view === 'channel' || (view === 'dms' && routeDirect)
                       ? 'Search loaded messages'
-                      : view === 'dms'
-                        ? 'Search direct messages'
-                        : 'Search channels'
+                      : view === 'activity'
+                        ? 'Search alerts'
+                        : view === 'dms'
+                          ? 'Search direct messages'
+                          : 'Search channels'
                   }
                   placeholder={
                     view === 'channel' || (view === 'dms' && routeDirect)
                       ? 'Search messages in this conversation'
-                      : view === 'dms'
-                        ? 'Find a direct conversation'
-                        : 'Find a channel in your workspace'
+                      : view === 'activity'
+                        ? 'Find an unread conversation'
+                        : view === 'dms'
+                          ? 'Find a direct conversation'
+                          : 'Find a channel in your workspace'
                   }
                   value={filter}
                   onChange={(event) => {
                     setFilter(event.target.value);
-                    if (view !== 'channel' && view !== 'channels' && view !== 'dms') {
+                    if (
+                      view !== 'channel' &&
+                      view !== 'channels' &&
+                      view !== 'dms' &&
+                      view !== 'activity'
+                    ) {
                       setView('channels');
                       router.push(`/w/${workspaceId}/channels`);
                     }
@@ -637,6 +645,14 @@ export function WorkspaceApp({
                 router.push(`/w/${workspaceId}/dms${id ? `/${id}` : ''}`);
               }}
             />
+          ) : view === 'activity' ? (
+            <Alerts
+              key={`${user.id}:${workspaceId}`}
+              workspace={workspaceId}
+              user={user}
+              query={filter}
+              open={(item) => navigate(item.direct_key ? 'dms' : 'channel', item.id)}
+            />
           ) : view === 'people' ? (
             <People
               key={workspaceId}
@@ -649,7 +665,6 @@ export function WorkspaceApp({
             <Empty
               title={
                 {
-                  activity: 'Your updates, in one place',
                   saved: 'Keep the good stuff close',
                 }[view]
               }
@@ -661,8 +676,6 @@ export function WorkspaceApp({
             >
               {
                 {
-                  activity:
-                    'Mentions and activity notifications are coming soon. Live conversations are available in your channels.',
                   saved:
                     'Saved messages are coming soon. Your channel conversations are always there when you need them.',
                 }[view]
@@ -731,7 +744,7 @@ export function WorkspaceApp({
                   Workspace owners and admins can create channels and share invitations from People.
                   You can edit or delete your own messages.
                 </p>
-                <p>Calls, files, and activity notifications are planned for a future release.</p>
+                <p>Check Alerts for unread channel messages and private conversations.</p>
                 <button className="primary" onClick={() => setDialog(null)}>
                   Got it
                 </button>

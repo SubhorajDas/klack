@@ -63,6 +63,17 @@ class ConversationService:
             for c in await self.repository.list_direct(workspace_id, actor)
         ]
 
+    async def alerts(
+        self, workspace_id: UUID, actor: UUID
+    ) -> list[tuple[ChannelView, Message, int]]:
+        await self.workspaces.require_membership(
+            actor_user_id=actor, workspace_id=workspace_id, for_update=False
+        )
+        return [
+            (ChannelView(channel=channel, is_member=True), message, count)
+            for channel, message, count in await self.repository.alerts(workspace_id, actor)
+        ]
+
     async def react(
         self,
         workspace_id: UUID,

@@ -61,6 +61,32 @@ class ReadResponse(BaseModel):
     unread_count: int
 
 
+class AlertResponse(BaseModel):
+    channel: ChannelResponse
+    message: MessageResponse
+    unread_count: int
+
+
+class AlertsResponse(BaseModel):
+    alerts: list[AlertResponse]
+
+
+@router.get("/workspaces/{workspace_id}/alerts", response_model=AlertsResponse)
+async def list_alerts(
+    workspace_id: UUID, service: Service, identity: CurrentIdentityDependency
+) -> AlertsResponse:
+    return AlertsResponse(
+        alerts=[
+            AlertResponse(
+                channel=ChannelResponse.from_view(channel),
+                message=MessageResponse.from_domain(message),
+                unread_count=count,
+            )
+            for channel, message, count in await service.alerts(workspace_id, identity.user.id)
+        ]
+    )
+
+
 @router.post("/workspaces/{workspace_id}/direct-messages", response_model=ChannelResponse)
 async def open_direct(
     workspace_id: UUID,

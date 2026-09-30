@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from klack.modules.channels.domain.errors import ChannelArchived
+from klack.modules.files.domain import Attachment, AttachmentGateway, FileError
 from klack.modules.messaging.application.ports import (
     ChannelContentAccessGateway,
     MessageEventWriter,
@@ -61,9 +62,11 @@ class MessageService:
         channel_access: ChannelContentAccessGateway,
         policy: MessagePolicy | None = None,
         event_writer: MessageEventWriter | None = None,
+        attachments: AttachmentGateway | None = None,
         clock: Callable[[], datetime] = utc_now,
         uuid_factory: Callable[[], UUID] = uuid4,
     ) -> None:
+        self._attachments = attachments
         self._repository = repository
         self._channel_access = channel_access
         self._policy = policy or MessagePolicy()
@@ -80,9 +83,10 @@ class MessageService:
         body: str,
         client_message_id: UUID | None = None,
         parent_message_id: UUID | None = None,
+        attachment_ids: tuple[UUID, ...] = (),
     ) -> Message:
         """Persist a message after locking and rechecking channel membership."""
-        self._validate_body(body)
+        self._validate_body(body, bool(attachment_ids))
         channel = await self._channel_access.require_access(
             actor_user_id=actor_user_id,
             workspace_id=workspace_id,
@@ -109,10 +113,22 @@ class MessageService:
             )
             if existing is not None:
                 await self._repository.rollback()
-                if existing.body != body or existing.parent_message_id != parent_message_id:
+                if (
+                    existing.body != body
+                    or existing.parent_message_id != parent_message_id
+                    or tuple(a.id for a in existing.attachments) != attachment_ids
+                ):
                     raise ClientMessageConflict
                 return existing
+        files: tuple[Attachment, ...] = ()
+        if attachment_ids:
+            if self._attachments is None:
+                raise FileError("File sharing is unavailable.", 503)
+            files = await self._attachments.prepare(
+                attachment_ids, actor_user_id, workspace_id, channel_id
+            )
         message = Message(
+            attachments=files,
             id=self._uuid_factory(),
             workspace_id=workspace_id,
             channel_id=channel_id,
@@ -130,6 +146,8 @@ class MessageService:
         else:
             created = await self._repository.add_message_idempotently(message)
             if created:
+                if attachment_ids and self._attachments:
+                    await self._attachments.attach(attachment_ids, message.id)
                 await self._reply_changed(message)
                 await self._event_writer.append_message_changed(message)
                 await self._repository.commit()
@@ -140,11 +158,15 @@ class MessageService:
                 client_message_id=client_message_id,
             )
             if existing is None or (
-                existing.body != body or existing.parent_message_id != parent_message_id
+                existing.body != body
+                or existing.parent_message_id != parent_message_id
+                or tuple(a.id for a in existing.attachments) != attachment_ids
             ):
                 raise ClientMessageConflict from None
             await self._repository.rollback()
             return existing
+        if attachment_ids and self._attachments:
+            await self._attachments.attach(attachment_ids, message.id)
         await self._reply_changed(message)
         await self._event_writer.append_message_changed(message)
         await self._repository.commit()
@@ -207,7 +229,6 @@ class MessageService:
         body: str,
     ) -> Message:
         """Edit a live message owned by the current channel member."""
-        self._validate_body(body)
         channel = await self._channel_access.require_access(
             actor_user_id=actor_user_id,
             workspace_id=workspace_id,
@@ -226,6 +247,7 @@ class MessageService:
         if message.is_deleted:
             await self._repository.rollback()
             raise MessageDeleted
+        self._validate_body(body, bool(message.attachments))
         if message.body == body:
             await self._repository.rollback()
             return message
@@ -266,6 +288,8 @@ class MessageService:
         if message.is_deleted:
             await self._repository.rollback()
             return
+        if self._attachments:
+            await self._attachments.remove(message.id)
         deleted_at = self._clock()
         await self._repository.update_message(
             message_id=message_id,
@@ -277,6 +301,7 @@ class MessageService:
         changed = replace(
             message,
             body=None,
+            attachments=(),
             deleted_at=deleted_at,
             revision=message.revision + 1,
         )
@@ -326,6 +351,8 @@ class MessageService:
         )
         await self._event_writer.append_message_changed(changed)
 
-    def _validate_body(self, body: str) -> None:
-        if not body.strip() or len(body) > self._policy.maximum_body_length:
+    def _validate_body(self, body: str, has_attachments: bool = False) -> None:
+        if (not body.strip() and not has_attachments) or len(
+            body
+        ) > self._policy.maximum_body_length:
             raise InvalidMessageBody

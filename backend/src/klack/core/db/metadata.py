@@ -5,6 +5,7 @@ Future feature model modules must be imported here before `target_metadata` is e
 
 import klack.modules.calling.models
 import klack.modules.channels.infrastructure.models
+import klack.modules.files.models
 import klack.modules.identity.infrastructure.models
 import klack.modules.messaging.infrastructure.models
 import klack.modules.realtime.infrastructure.models

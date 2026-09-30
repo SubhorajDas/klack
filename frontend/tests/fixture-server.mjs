@@ -93,6 +93,7 @@ function reset() {
 }
 reset();
 const membership = { user_id: uid, workspace_id: wid, role: 'owner', joined_at: user.created_at };
+let uploads = new Map();
 const wss = new WebSocketServer({ noServer: true });
 function broadcast(message) {
   for (const client of wss.clients)
@@ -118,6 +119,7 @@ const server = createServer(async (req, res) => {
   if (path === '/__reset') {
     for (const client of wss.clients) client.close();
     reset();
+    uploads.clear();
     return json({ ok: true });
   }
   if (path === '/__mode') {
@@ -268,6 +270,30 @@ const server = createServer(async (req, res) => {
     }
     return json(dm);
   }
+  if (path.endsWith('/alerts') && req.method === 'GET') {
+    return json({
+      alerts: channels
+        .filter((channel) => channel.is_member)
+        .flatMap((channel) => {
+          const cursor = cursors.get(channel.id);
+          const unread = messages
+            .filter(
+              (message) =>
+                message.channel_id === channel.id &&
+                message.author_user_id !== uid &&
+                !message.deleted_at &&
+                (!cursor ||
+                  message.created_at > cursor.created_at ||
+                  (message.created_at === cursor.created_at && message.id > cursor.id)),
+            )
+            .sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+          return unread.length
+            ? [{ channel, message: unread[0], unread_count: unread.length }]
+            : [];
+        })
+        .sort((a, b) => b.message.created_at.localeCompare(a.message.created_at)),
+    });
+  }
   if (path.endsWith('/read-cursor')) {
     const channel = path.split('/').at(-2);
     if (body.message_id) {
@@ -300,6 +326,61 @@ const server = createServer(async (req, res) => {
     broadcast(message);
     return json(message);
   }
+  if (path.endsWith('/files/limits'))
+    return json({ enabled: true, max_bytes: 26214400, max_attachments: 5 });
+  if (path.endsWith('/files')) {
+    const channel = path.split('/').at(-2);
+    if (req.method === 'POST') {
+      const file = {
+        id: randomUUID(),
+        filename: body.filename,
+        size: body.size,
+        content_type: 'application/octet-stream',
+        channel,
+      };
+      uploads.set(file.id, file);
+      return json(file, 201);
+    }
+    return json({
+      files: messages
+        .filter((message) => message.channel_id === channel && !message.deleted_at)
+        .flatMap((message) => message.attachments || []),
+      next_before: null,
+    });
+  }
+  if (path.includes('/files/')) {
+    const id = path.endsWith('/content') ? path.split('/').at(-2) : path.split('/').at(-1);
+    const file = uploads.get(id);
+    if (!file) return json({ detail: 'File not found.' }, 404);
+    if (req.method === 'DELETE') {
+      uploads.delete(id);
+      return json({}, 204);
+    }
+    if (req.method === 'PUT') {
+      if (mode === 'upload-fail-once') {
+        mode = '';
+        return json({ detail: 'Connection interrupted.' }, 503);
+      }
+      file.data = data;
+      return json({
+        id: file.id,
+        filename: file.filename,
+        size: file.size,
+        content_type: file.content_type,
+      });
+    }
+    if (
+      !messages.some(
+        (message) => !message.deleted_at && message.attachments?.some((item) => item.id === id),
+      )
+    )
+      return json({ detail: 'File not found.' }, 404);
+    res.writeHead(200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': `attachment; filename="${file.filename}"`,
+    });
+    return res.end(file.data);
+  }
   if (path.endsWith('/messages')) {
     const channel = path.split('/').at(-2);
     if (req.method === 'GET') {
@@ -326,6 +407,10 @@ const server = createServer(async (req, res) => {
         workspace_id: wid,
         channel_id: channel,
         body: body.body,
+        attachments: (body.attachment_ids || []).map((id) => {
+          const { data, channel, ...file } = uploads.get(id);
+          return file;
+        }),
         client_message_id: body.client_message_id,
         parent_message_id: body.parent_message_id || null,
         revision: 1,

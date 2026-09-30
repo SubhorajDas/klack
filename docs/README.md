@@ -17,3 +17,5 @@ The architecture overview describes the implemented system. ADRs preserve the co
 tradeoffs of individual decisions; planned capabilities mentioned in them are not necessarily
 implemented. Package manifests, configuration validation, migrations, and route definitions
 remain the source of truth when changing these guides.
+
+- [File sharing](files.md): upload lifecycle, deployment, limits, and cleanup.

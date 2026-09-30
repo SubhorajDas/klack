@@ -90,6 +90,7 @@ def make_seed_settings(settings: Settings, **updates: object) -> DevelopmentSeed
     values.update(
         {
             "app_env": AppEnvironment.DEVELOPMENT,
+            "files_enabled": False,
             "dev_seed_enabled": True,
             "dev_seed_password": PASSWORD,
             **updates,

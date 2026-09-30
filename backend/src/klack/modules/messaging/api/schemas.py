@@ -4,8 +4,9 @@ from datetime import datetime
 from typing import Annotated, Self
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from klack.modules.files.domain import Attachment
 from klack.modules.messaging.application.service import MessagePage
 from klack.modules.messaging.domain.entities import Message
 
@@ -22,15 +23,24 @@ MessageBody = Annotated[str, Field(min_length=1, max_length=4_000)]
 class CreateMessageRequest(StrictRequest):
     """Create a message in one channel."""
 
-    body: MessageBody
+    body: str = Field(default="", max_length=4_000)
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=5)
     client_message_id: UUID | None = None
     parent_message_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def require_content(self) -> Self:
+        if not self.body.strip() and not self.attachment_ids:
+            raise ValueError("A message needs text or an attachment.")
+        if len(set(self.attachment_ids)) != len(self.attachment_ids):
+            raise ValueError("Duplicate attachments are not allowed.")
+        return self
 
 
 class UpdateMessageRequest(StrictRequest):
     """Replace the body of an existing message."""
 
-    body: MessageBody
+    body: str = Field(max_length=4_000)
 
 
 class MessageResponse(BaseModel):
@@ -49,10 +59,12 @@ class MessageResponse(BaseModel):
     parent_message_id: UUID | None
     reactions: list[tuple[str, UUID]]
     reply_count: int
+    attachments: list[Attachment]
 
     @classmethod
     def from_domain(cls, message: Message) -> Self:
         return cls(
+            attachments=list(message.attachments) if not message.is_deleted else [],
             id=message.id,
             workspace_id=message.workspace_id,
             channel_id=message.channel_id,

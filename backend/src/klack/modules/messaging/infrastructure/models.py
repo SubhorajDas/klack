@@ -31,8 +31,8 @@ class MessageRecord(Base):
         ),
         CheckConstraint(
             "((deleted_at IS NULL AND body IS NOT NULL "
-            "AND char_length(body) BETWEEN 1 AND 4000 AND trim(body) <> '') "
-            "OR (deleted_at IS NOT NULL AND body IS NULL))",
+            "AND char_length(body) <= 4000 AND (trim(body) <> '' OR attachment_count > 0)) "
+            "OR (deleted_at IS NOT NULL AND body IS NULL AND attachment_count = 0))",
             name="live_body_or_deleted_tombstone",
         ),
         CheckConstraint(
@@ -55,12 +55,17 @@ class MessageRecord(Base):
             "client_message_id",
         ),
         CheckConstraint("revision >= 1", name="positive_revision"),
+        CheckConstraint("attachment_count BETWEEN 0 AND 5", name="attachment_count_range"),
         UniqueConstraint("channel_id", "id"),
         ForeignKeyConstraint(
             ["channel_id", "parent_message_id"],
             ["message_messages.channel_id", "message_messages.id"],
         ),
         Index("ix_message_messages_parent", "parent_message_id", "created_at", "id"),
+    )
+
+    attachment_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
     )
 
     parent_message_id: Mapped[UUID | None] = mapped_column(Uuid)

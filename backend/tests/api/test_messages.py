@@ -192,7 +192,15 @@ async def test_message_routes_map_requests_and_responses(message_api: MessageApi
         "workspace_id": WORKSPACE_ID,
         "channel_id": CHANNEL_ID,
     }
-    assert message_api.service.calls["create_message"] == [{**common, "body": "hello"}]
+    assert message_api.service.calls["create_message"] == [
+        {
+            **common,
+            "body": "hello",
+            "client_message_id": None,
+            "parent_message_id": None,
+            "attachment_ids": (),
+        }
+    ]
     assert message_api.service.calls["list_messages"] == [
         {**common, "before": OLDER_ID, "limit": 25},
     ]
@@ -222,6 +230,8 @@ async def test_create_maps_client_message_id_for_retry_reconciliation(
             "channel_id": CHANNEL_ID,
             "body": "hello",
             "client_message_id": client_message_id,
+            "parent_message_id": None,
+            "attachment_ids": (),
         },
     ]
 

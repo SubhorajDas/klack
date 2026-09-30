@@ -14,6 +14,103 @@ async function openChannel(page: Page) {
   await expect(page.getByText('Connected', { exact: true })).toBeVisible();
   await expect(page.getByRole('log')).toContainText('Here’s the latest iteration');
 }
+
+test('file-only sends survive retry and reload, download, and appear in Files', async ({
+  page,
+  request,
+}) => {
+  await login(page);
+  await openChannel(page);
+  await expect(page.getByRole('button', { name: 'Attach files' })).toBeEnabled();
+  await page.getByLabel('Choose attachments').setInputFiles({
+    name: 'meeting-notes.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('Notes from our meeting'),
+  });
+  await expect(page.getByLabel('Attachments to send')).toContainText('Ready');
+  await page.reload();
+  await expect(page.getByLabel('Attachments to send')).toContainText('meeting-notes.txt');
+  await request.post('http://127.0.0.1:8100/__mode', { data: { mode: 'fail-once' } });
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.getByText('Response lost. Please retry.')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry send', exact: true }).last().click();
+  const download = page
+    .getByRole('log')
+    .getByRole('button', { name: 'Download meeting-notes.txt' });
+  await expect(download).toHaveCount(1);
+  await expect(page.getByLabel('Attachments to send')).toHaveCount(0);
+  const received = page.waitForEvent('download');
+  await download.click();
+  expect((await received).suggestedFilename()).toBe('meeting-notes.txt');
+  await page.reload();
+  await expect(download).toHaveCount(1);
+  await page.getByRole('button', { name: 'Files', exact: true }).click();
+  await expect(page.getByLabel('Shared files')).toContainText('meeting-notes.txt');
+  await page.screenshot({ path: 'test-results/files-desktop.png', fullPage: true });
+});
+
+test('uploads retry individually, reject too many files, and can be removed', async ({
+  page,
+  request,
+}) => {
+  await login(page);
+  await openChannel(page);
+  await expect(page.getByRole('button', { name: 'Attach files' })).toBeEnabled();
+  const input = page.getByLabel('Choose attachments');
+  await input.setInputFiles(
+    Array.from({ length: 6 }, (_, index) => ({
+      name: `${index}.txt`,
+      mimeType: 'text/plain',
+      buffer: Buffer.from('a'),
+    })),
+  );
+  await expect(page.getByText('Choose up to 5 files per message.')).toBeVisible();
+  await request.post('http://127.0.0.1:8100/__mode', { data: { mode: 'upload-fail-once' } });
+  await input.setInputFiles({
+    name: 'retry.txt',
+    mimeType: 'text/plain',
+    buffer: Buffer.from('retry me'),
+  });
+  await expect(page.getByLabel('Attachments to send')).toContainText('Connection interrupted.');
+  await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Retry upload' }).click();
+  await expect(page.getByLabel('Attachments to send')).toContainText('Ready');
+  await page.getByRole('button', { name: 'Remove retry.txt' }).click();
+  await expect(page.getByLabel('Attachments to send')).toHaveCount(0);
+});
+
+test('files can be sent in threads and private DMs on mobile', async ({ page }) => {
+  await login(page);
+  await openChannel(page);
+  await page
+    .locator('article.message')
+    .first()
+    .getByRole('button', { name: 'Reply in thread' })
+    .click();
+  const panel = page.locator('.thread-panel');
+  await expect(panel.getByRole('button', { name: 'Attach files' })).toBeEnabled();
+  await panel
+    .getByLabel('Choose attachments')
+    .setInputFiles({ name: 'thread.txt', mimeType: 'text/plain', buffer: Buffer.from('reply') });
+  await expect(panel.getByLabel('Attachments to send')).toContainText('Ready');
+  await panel.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(panel.getByRole('log')).toContainText('thread.txt');
+  await expect(page.locator('.message-list')).not.toContainText('thread.txt');
+  await panel.getByRole('button', { name: 'Close thread' }).click();
+  await page.getByRole('button', { name: 'Direct messages', exact: true }).click();
+  await page.getByRole('button', { name: 'New direct message' }).click();
+  await page.getByLabel('Start a conversation').selectOption('alex-123');
+  await page.getByRole('button', { name: 'Open conversation' }).click();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole('button', { name: 'Attach files' })).toBeEnabled();
+  await page
+    .getByLabel('Choose attachments')
+    .setInputFiles({ name: 'private.txt', mimeType: 'text/plain', buffer: Buffer.from('private') });
+  await expect(page.getByLabel('Attachments to send')).toContainText('Ready');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(page.getByRole('log')).toContainText('private.txt');
+  await page.screenshot({ path: 'test-results/files-mobile.png', fullPage: true });
+});
 test.beforeEach(async ({ request }) => {
   await request.post('http://127.0.0.1:8100/__reset');
 });
@@ -368,3 +465,64 @@ for (const mode of ['leave-only', 'leave-another', 'last-owner']) {
     ).toHaveLength(1);
   });
 }
+
+test('alerts filter, search, and persist read state on mobile', async ({ page }) => {
+  await login(page);
+  await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Alerts' })).toBeVisible();
+  const inbox = page.getByRole('list', { name: 'Unread conversations' });
+  await expect(inbox).toContainText('product-design');
+  await page.getByRole('button', { name: 'Direct messages', exact: true }).last().click();
+  await expect(page.getByText('No matching alerts')).toBeVisible();
+  await page.getByRole('button', { name: 'All alerts', exact: true }).click();
+  await page.getByLabel('Search alerts').fill('does-not-exist');
+  await expect(page.getByText('No matching alerts')).toBeVisible();
+  await page.getByLabel('Search alerts').fill('product-design');
+  await expect(inbox).toBeVisible();
+  await page.screenshot({ path: 'test-results/alerts-desktop.png', fullPage: true });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.sidebar')).not.toBeInViewport();
+  await page.screenshot({ path: 'test-results/alerts-mobile.png', fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+  await inbox.getByRole('button', { name: 'Mark as read', exact: true }).click();
+  await page.getByLabel('Search alerts').fill('');
+  await expect(page.getByText('You’re all caught up')).toBeVisible();
+  await page.reload();
+  await expect(page.getByText('You’re all caught up')).toBeVisible();
+});
+
+test('alerts keep unread items on failed mark and offer retry after load failure', async ({
+  page,
+}) => {
+  await login(page);
+  await page.route('**/api/v1/workspaces/*/alerts', (route) =>
+    route.fulfill({
+      status: 503,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: 'Alerts unavailable' }),
+    }),
+  );
+  await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+  await expect(page.getByText('Alerts unavailable')).toBeVisible();
+  await expect(page.getByText('You’re all caught up')).toHaveCount(0);
+  await page.unroute('**/api/v1/workspaces/*/alerts');
+  await page.getByRole('button', { name: 'Retry', exact: true }).click();
+  const inbox = page.getByRole('list', { name: 'Unread conversations' });
+  await expect(inbox).toBeVisible();
+  await page.route('**/read-cursor', (route) =>
+    route.request().method() === 'PUT'
+      ? route.fulfill({
+          status: 503,
+          contentType: 'application/json',
+          body: JSON.stringify({ detail: 'Please try again' }),
+        })
+      : route.continue(),
+  );
+  await page.getByRole('button', { name: 'Mark shown as read', exact: true }).click();
+  await expect(page.getByText('Please try again')).toBeVisible();
+  await expect(inbox).toContainText('product-design');
+  await inbox.getByRole('button', { name: 'Open conversation' }).click();
+  await expect(page).toHaveURL(new RegExp(`/channel/${cid}`));
+});

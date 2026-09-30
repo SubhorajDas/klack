@@ -202,6 +202,12 @@ Server records remain authoritative. Tab-local drafts and uncertain sends surviv
 scoped by user/workspace/channel/thread. Authentication credentials never enter browser storage.
 Unread counts refresh periodically and on relevant local events; they are not presence signals.
 
+The Alerts inbox reads `/workspaces/{id}/alerts` from the messaging module. A membership-filtered
+query groups unread messages (including thread replies) by conversation, returning the latest
+preview and count for each. It reuses persistent read cursors rather than storing duplicate
+notifications. Marking an alert read advances only through the displayed message so later arrivals
+remain unread. The inbox refreshes every 15 seconds while visible and on observed local events.
+
 ## Evolution and validation
 
 Apply migrations before deploying code that depends on them. The API never creates or migrates
@@ -215,3 +221,22 @@ See [development](../development.md) and [operations](../operations.md) for chec
 
 Future service extraction, external brokers, offline notifications, and full-history search need
 their own measured requirements and decisions. They are not prerequisites of the current runtime.
+
+## File sharing
+
+The `files` module owns private storage, reservations, inspection, attachment metadata,
+and garbage collection. The messaging service uses `AttachmentGateway` to validate and
+link ready uploads in the same transaction as the message and realtime event. Message
+history batch-loads attachments to avoid per-message file queries.
+
+Uploads pass through authenticated HTTP, with bounded concurrency and exact size checks.
+The browser first reserves quota, then sends raw bytes. Database locks are released during
+transfer, scanning, and storage I/O; membership is checked again before readiness. Private
+local storage supports development; S3 supports deployment. The browser receives no storage
+credentials or public object URLs. Downloads reauthorize before and after storage I/O.
+
+`klack-files-worker` retries deletion work. Reservations and ready drafts expire after
+24 hours; interrupted active transfers expire after one hour. Deleting a message marks its
+files inaccessible within the message transaction and queues physical deletion. File rows
+restrict hard deletion of their owner/channel/message until cleanup removes those records.
+See [file-sharing setup](../files.md).

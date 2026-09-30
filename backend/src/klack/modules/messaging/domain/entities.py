@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from uuid import UUID
 
+from klack.modules.files.domain import Attachment
+
 
 @dataclass(frozen=True, slots=True)
 class Message:
@@ -22,6 +24,7 @@ class Message:
     parent_message_id: UUID | None = None
     reactions: tuple[tuple[str, UUID], ...] = ()
     reply_count: int = 0
+    attachments: tuple[Attachment, ...] = ()
 
     @property
     def is_deleted(self) -> bool:

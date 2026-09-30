@@ -96,3 +96,8 @@ automatically roll the schema back after an application failure. Development tea
 The [performance workload](../performance/README.md) measures HTTP API journeys through the
 frontend proxy. It does not measure WebSocket delivery, LiveKit media, page rendering, or production
 capacity. Use its results only within the environment and workload that produced them.
+
+## File storage and cleanup
+
+File sharing requires private durable storage and the `klack-files-worker` process.
+See [file-sharing deployment](files.md) for configuration, scanning, backup, and limits.

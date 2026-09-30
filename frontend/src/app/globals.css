@@ -2794,3 +2794,253 @@ dialog::backdrop {
     padding-left: 31px;
   }
 }
+
+/* Conversation attachments */
+.file-picker {
+  padding: 8px 12px;
+  border-top: 1px solid var(--border, #e6e3ed);
+}
+.file-picker > small {
+  margin-left: 10px;
+}
+.upload-queue {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.upload-queue li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--surface, #f6f5f9);
+}
+.upload-queue li > div {
+  min-width: 0;
+  flex: 1;
+}
+.upload-queue strong,
+.attachment-card strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+.upload-queue small,
+.attachment-card small {
+  display: block;
+  font-size: 12px;
+  color: #70687c;
+}
+.upload-queue progress {
+  width: 100%;
+  height: 5px;
+  accent-color: #7752be;
+}
+.attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 8px 0;
+}
+.attachment-card {
+  width: min(280px, 100%);
+  min-width: 0;
+  border: 1px solid var(--border, #e6e3ed);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface, #fff);
+}
+.attachment-card > button {
+  display: flex;
+  text-align: left;
+  gap: 10px;
+  align-items: center;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 12px;
+}
+.attachment-card > button > svg {
+  flex-shrink: 0;
+}
+.attachment-card > button > span {
+  min-width: 0;
+}
+.attachment-image {
+  display: block;
+  width: 100%;
+  max-height: 220px;
+  object-fit: contain;
+  background: #f6f5f9;
+}
+.files-panel {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  min-height: 0;
+}
+@media (max-width: 600px) {
+  .file-picker > small {
+    display: block;
+    margin: 4px 0;
+  }
+  .upload-queue li {
+    flex-wrap: wrap;
+  }
+}
+
+.files-panel > .button-row {
+  justify-content: space-between;
+}
+.files-panel h2 {
+  margin: 0;
+}
+.attachment-card > button {
+  justify-content: flex-start;
+}
+
+/* Workspace alerts */
+.alerts-page {
+  max-width: 1200px;
+  width: 100%;
+  margin: 0 auto;
+}
+.alerts-page .page-heading {
+  align-items: flex-start;
+  gap: 20px;
+}
+.alerts-page h1 .count {
+  vertical-align: middle;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+.alerts-summary {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 24px;
+  margin: 12px 0 28px;
+  background: linear-gradient(110deg, #f2edff, #faf8ff);
+  border: 1px solid #e8defe;
+  border-radius: 12px;
+}
+.alerts-summary p {
+  color: var(--muted);
+  margin-top: 4px;
+}
+.alerts-bell {
+  display: grid;
+  place-items: center;
+  flex: 0 0 50px;
+  height: 50px;
+  border-radius: 14px;
+  background: white;
+  color: var(--purple);
+}
+.alerts-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 16px;
+  margin-bottom: 20px;
+}
+.alerts-filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.alerts-filters button {
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.alerts-filters button.selected {
+  background: var(--soft);
+  color: var(--purple-dark);
+}
+.alerts-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.alert-card {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--purple);
+  border-radius: 10px;
+  padding: 22px;
+  background: white;
+}
+.alert-content {
+  flex: 1;
+  min-width: 0;
+}
+.alert-context {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.alert-context strong {
+  overflow-wrap: anywhere;
+}
+.alert-context time {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted);
+}
+.alert-author {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 6px 0;
+}
+.alert-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.alert-actions {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-top: 15px;
+}
+@media (max-width: 700px) {
+  .alerts-page .page-heading {
+    flex-direction: column;
+  }
+  .alerts-summary {
+    padding: 18px;
+    gap: 12px;
+  }
+  .alert-card {
+    padding: 16px 12px;
+    gap: 10px;
+  }
+  .alert-card > .avatar {
+    display: none;
+  }
+  .alert-context time {
+    width: 100%;
+    margin-left: 0;
+  }
+  .alerts-filters button {
+    padding: 8px;
+    font-size: 12px;
+  }
+  .alert-actions {
+    gap: 12px;
+  }
+}

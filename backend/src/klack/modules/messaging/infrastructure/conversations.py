@@ -5,15 +5,18 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from klack.modules.channels.domain.entities import Channel
 from klack.modules.channels.infrastructure.models import ChannelMembershipRecord, ChannelRecord
 from klack.modules.channels.infrastructure.repository import SqlAlchemyChannelRepository
+from klack.modules.messaging.domain.entities import Message
 from klack.modules.messaging.infrastructure.models import (
     MessageRecord,
     ReactionRecord,
     ReadCursorRecord,
 )
+from klack.modules.messaging.infrastructure.repository import SqlAlchemyMessageRepository
 
 
 class SqlAlchemyConversationRepository:
@@ -68,6 +71,66 @@ class SqlAlchemyConversationRepository:
             .order_by(ChannelRecord.created_at.desc())
         )
         return [SqlAlchemyChannelRepository._channel(row) for row in rows]
+
+    async def alerts(self, workspace_id: UUID, actor: UUID) -> list[tuple[Channel, Message, int]]:
+        previous = aliased(MessageRecord)
+        unread = (
+            select(
+                MessageRecord.id.label("message_id"),
+                func.count().over(partition_by=MessageRecord.channel_id).label("unread_count"),
+                func.row_number()
+                .over(
+                    partition_by=MessageRecord.channel_id,
+                    order_by=(MessageRecord.created_at.desc(), MessageRecord.id.desc()),
+                )
+                .label("position"),
+            )
+            .join(
+                ChannelMembershipRecord,
+                and_(
+                    ChannelMembershipRecord.channel_id == MessageRecord.channel_id,
+                    ChannelMembershipRecord.user_id == actor,
+                ),
+            )
+            .outerjoin(
+                ReadCursorRecord,
+                and_(
+                    ReadCursorRecord.channel_id == MessageRecord.channel_id,
+                    ReadCursorRecord.user_id == actor,
+                ),
+            )
+            .outerjoin(previous, previous.id == ReadCursorRecord.message_id)
+            .where(
+                MessageRecord.workspace_id == workspace_id,
+                MessageRecord.author_user_id != actor,
+                MessageRecord.deleted_at.is_(None),
+                or_(
+                    previous.id.is_(None),
+                    MessageRecord.created_at > previous.created_at,
+                    and_(
+                        MessageRecord.created_at == previous.created_at,
+                        MessageRecord.id > previous.id,
+                    ),
+                ),
+            )
+            .subquery()
+        )
+        rows = (
+            await self.session.execute(
+                select(ChannelRecord, MessageRecord, unread.c.unread_count)
+                .join(MessageRecord, MessageRecord.channel_id == ChannelRecord.id)
+                .join(unread, unread.c.message_id == MessageRecord.id)
+                .where(unread.c.position == 1)
+                .order_by(MessageRecord.created_at.desc(), MessageRecord.id.desc())
+            )
+        ).all()
+        messages = await SqlAlchemyMessageRepository(self.session)._messages(
+            [row[1] for row in rows]
+        )
+        return [
+            (SqlAlchemyChannelRepository._channel(row[0]), message, row[2])
+            for row, message in zip(rows, messages, strict=True)
+        ]
 
     async def reaction(self, message_id: UUID, actor: UUID, emoji: str, add: bool) -> bool:
         row = await self.session.get(ReactionRecord, (message_id, actor, emoji))

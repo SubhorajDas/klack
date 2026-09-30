@@ -11,11 +11,13 @@ modular monolith and PostgreSQL. LiveKit provides optional voice media transport
 - Public and private channels with explicit membership and reversible archival.
 - Durable messages with pagination, edits, content-erasing deletion, threads, and reactions.
 - Retry-safe sends and authenticated realtime delivery across API processes.
+- Private file sharing in channels, DMs, and threads, with upload progress, image previews, and downloads.
 - Private one-to-one DMs, persistent read positions, and unread counts.
+- Alerts inbox for unread channel messages, DMs, and thread replies, with search and mark-as-read actions.
 - Voice calls with accept/decline, microphone controls, history, and incoming notifications while the app is open.
 - Responsive desktop/mobile layouts and tab-local message drafts.
 
-Uploads, presence, pinned/saved messages, group/video calls, SSO, and editable profiles are not
+Presence, pinned/saved messages, group/video calls, SSO, and editable profiles are not
 implemented. Search filters loaded messages; it is not a full-history search service.
 
 ## Quick start
@@ -67,6 +69,8 @@ core messaging. Existing installations should keep their `.env` and apply all mi
 Swagger mutations require switching the trusted origin to port 8000; see
 [browser origins](docs/development.md#browser-origins). If you change the root `.env` after startup,
 recreate the API with `docker compose up -d --force-recreate api`.
+
+See [file-sharing setup](docs/files.md) for storage, scanning, limits, and the cleanup worker.
 
 ## Optional services
 

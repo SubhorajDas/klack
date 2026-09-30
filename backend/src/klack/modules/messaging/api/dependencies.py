@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from klack.api.dependencies import get_session
 from klack.modules.channels.application.service import ChannelContentAccessService
 from klack.modules.channels.infrastructure.repository import SqlAlchemyChannelRepository
+from klack.modules.files.service import FileService
 from klack.modules.messaging.application.service import MessageService
 from klack.modules.messaging.infrastructure.repository import SqlAlchemyMessageRepository
 from klack.modules.realtime.infrastructure.repository import SqlAlchemyRealtimeEventRepository
@@ -23,6 +24,7 @@ async def get_message_service(
     container = request.app.state.container
     return MessageService(
         repository=SqlAlchemyMessageRepository(session),
+        attachments=FileService(session, container.settings),
         channel_access=ChannelContentAccessService(
             repository=SqlAlchemyChannelRepository(session),
             workspace_access=WorkspaceAccessService(SqlAlchemyWorkspaceRepository(session)),

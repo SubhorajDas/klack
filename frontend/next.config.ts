@@ -2,6 +2,7 @@ import type { NextConfig } from 'next';
 
 const config: NextConfig = {
   devIndicators: false,
+  experimental: { proxyClientMaxBodySize: '101mb' },
   distDir: process.env.KLACK_E2E === '1' ? '.next-e2e' : '.next',
   async rewrites() {
     return [

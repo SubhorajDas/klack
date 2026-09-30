@@ -34,31 +34,15 @@ async def create_message(
     identity: CurrentMutationIdentityDependency,
 ) -> MessageResponse:
     """Create a message as an explicit member of an active channel."""
-    if payload.client_message_id is None:
-        message = await service.create_message(
-            actor_user_id=identity.user.id,
-            workspace_id=workspace_id,
-            channel_id=channel_id,
-            body=payload.body,
-            **(
-                {"parent_message_id": payload.parent_message_id}
-                if payload.parent_message_id
-                else {}
-            ),
-        )
-    else:
-        message = await service.create_message(
-            actor_user_id=identity.user.id,
-            workspace_id=workspace_id,
-            channel_id=channel_id,
-            body=payload.body,
-            **(
-                {"parent_message_id": payload.parent_message_id}
-                if payload.parent_message_id
-                else {}
-            ),
-            client_message_id=payload.client_message_id,
-        )
+    message = await service.create_message(
+        actor_user_id=identity.user.id,
+        workspace_id=workspace_id,
+        channel_id=channel_id,
+        body=payload.body,
+        client_message_id=payload.client_message_id,
+        parent_message_id=payload.parent_message_id,
+        attachment_ids=tuple(payload.attachment_ids),
+    )
     response.headers["Cache-Control"] = "no-store"
     return MessageResponse.from_domain(message)
 

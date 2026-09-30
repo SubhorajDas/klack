@@ -180,3 +180,74 @@ async def test_thread_pagination_and_archival(conversation_api):
         await client.post(MESSAGES, json={"body": "closed", "parent_message_id": root})
     ).status_code == 409
     assert (await client.get(MESSAGES, params={"parent_message_id": root})).status_code == 200
+
+
+async def test_alerts_include_threads_and_enforce_membership(
+    conversation_api, session: AsyncSession
+):
+    client, actor = conversation_api
+    dm = (await client.post(f"{BASE}/direct-messages", json={"user_id": str(PEER)})).json()
+    path = f"{BASE}/channels/{dm['id']}"
+    root = (await client.post(f"{path}/messages", json={"body": "Hello"})).json()
+    reply = (
+        await client.post(
+            f"{path}/messages", json={"body": "Thread update", "parent_message_id": root["id"]}
+        )
+    ).json()
+    deleted = (await client.post(f"{path}/messages", json={"body": "Removed"})).json()
+    await client.delete(f"{path}/messages/{deleted['id']}")
+    assert (await client.get(f"{BASE}/alerts")).json() == {"alerts": []}
+    actor.user.id = PEER
+    own = await client.post(f"{path}/messages", json={"body": "My message"})
+    assert own.status_code == 201
+    response = await client.get(f"{BASE}/alerts")
+    assert response.status_code == 200
+    alerts = response.json()["alerts"]
+    assert len(alerts) == 1
+    assert alerts[0]["channel"]["id"] == dm["id"]
+    assert alerts[0]["unread_count"] == 2
+    assert alerts[0]["message"]["id"] == reply["id"]
+    assert alerts[0]["message"]["parent_message_id"] == root["id"]
+    await client.put(f"{path}/read-cursor", json={"message_id": root["id"]})
+    assert (await client.get(f"{BASE}/alerts")).json()["alerts"][0]["unread_count"] == 1
+    await client.put(f"{path}/read-cursor", json={"message_id": reply["id"]})
+    assert (await client.get(f"{BASE}/alerts")).json() == {"alerts": []}
+    actor.user.id = AUTHOR_ID
+    assert len((await client.get(f"{BASE}/alerts")).json()["alerts"]) == 1
+    actor.user.id = ADMIN
+    assert (await client.get(f"{BASE}/alerts")).json() == {"alerts": []}
+    assert (await client.get(f"/api/v1/workspaces/{uuid4()}/alerts")).status_code == 404
+    await session.execute(
+        delete(MembershipRecord).where(
+            MembershipRecord.workspace_id == WORKSPACE_ID, MembershipRecord.user_id == PEER
+        )
+    )
+    await session.commit()
+    actor.user.id = PEER
+    assert (await client.get(f"{BASE}/alerts")).status_code == 404
+
+
+async def test_alerts_channel_membership_archival_and_new_arrivals(conversation_api):
+    client, actor = conversation_api
+    channel_path = f"{BASE}/channels/{CHANNEL_ID}"
+    first = (await client.post(MESSAGES, json={"body": "First"})).json()
+    actor.user.id = PEER
+    # Public visibility alone must not subscribe someone to alerts.
+    assert (await client.get(f"{BASE}/alerts")).json() == {"alerts": []}
+    assert (await client.put(f"{channel_path}/memberships/me")).status_code == 200
+    snapshot = (await client.get(f"{BASE}/alerts")).json()["alerts"][0]
+    assert snapshot["message"]["id"] == first["id"]
+    actor.user.id = AUTHOR_ID
+    newer = (await client.post(MESSAGES, json={"body": "Arrived after snapshot"})).json()
+    await client.post(f"{channel_path}/archive")
+    actor.user.id = PEER
+    await client.put(f"{channel_path}/read-cursor", json={"message_id": first["id"]})
+    remaining = (await client.get(f"{BASE}/alerts")).json()["alerts"]
+    assert len(remaining) == 1
+    assert remaining[0]["channel"]["archived_at"] is not None
+    assert remaining[0]["unread_count"] == 1
+    assert remaining[0]["message"]["id"] == newer["id"]
+    actor.user.id = AUTHOR_ID
+    await client.delete(f"{channel_path}/memberships/{PEER}")
+    actor.user.id = PEER
+    assert (await client.get(f"{BASE}/alerts")).json() == {"alerts": []}

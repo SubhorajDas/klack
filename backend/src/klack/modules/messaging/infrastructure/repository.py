@@ -12,6 +12,8 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from klack.modules.files.domain import Attachment
+from klack.modules.files.models import FileRecord
 from klack.modules.messaging.domain.entities import Message
 from klack.modules.messaging.infrastructure.models import MessageRecord, ReactionRecord
 
@@ -134,6 +136,7 @@ class SqlAlchemyMessageRepository:
                 edited_at=edited_at,
                 deleted_at=deleted_at,
                 revision=revision,
+                **({"attachment_count": 0} if deleted_at is not None else {}),
             ),
         )
 
@@ -150,6 +153,16 @@ class SqlAlchemyMessageRepository:
         if not records:
             return []
         ids = [row.id for row in records]
+        files: dict[UUID, list[Attachment]] = defaultdict(list)
+        for file in (
+            await self._session.scalars(
+                select(FileRecord)
+                .where(FileRecord.message_id.in_(ids), FileRecord.status == "attached")
+                .order_by(FileRecord.position)
+            )
+        ).all():
+            if file.message_id is not None:
+                files[file.message_id].append(file.attachment())
         reactions: dict[UUID, list[tuple[str, UUID]]] = defaultdict(list)
         for message_id, emoji, user_id in (
             await self._session.execute(
@@ -168,14 +181,19 @@ class SqlAlchemyMessageRepository:
         ).all()
         counts = {parent: count for parent, count in count_rows}
         return [
-            self._domain(row, tuple(reactions[row.id]), counts.get(row.id, 0)) for row in records
+            self._domain(row, tuple(reactions[row.id]), counts.get(row.id, 0), tuple(files[row.id]))
+            for row in records
         ]
 
     @staticmethod
     def _domain(
-        record: MessageRecord, reactions: tuple[tuple[str, UUID], ...], count: int
+        record: MessageRecord,
+        reactions: tuple[tuple[str, UUID], ...],
+        count: int,
+        attachments: tuple[Attachment, ...] = (),
     ) -> Message:
         return Message(
+            attachments=attachments if record.deleted_at is None else (),
             parent_message_id=record.parent_message_id,
             reactions=reactions if record.deleted_at is None else (),
             reply_count=count or 0,
@@ -198,6 +216,7 @@ class SqlAlchemyMessageRepository:
     @staticmethod
     def _record_values(message: Message) -> dict[str, object]:
         return {
+            "attachment_count": len(message.attachments),
             "parent_message_id": message.parent_message_id,
             "id": message.id,
             "workspace_id": message.workspace_id,

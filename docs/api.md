@@ -5,6 +5,22 @@
 Paths assume the default `/api/v1` prefix. Exact schemas are available from the running
 API at `/openapi.json`; interactive `/docs` is development-only.
 
+## Alerts
+
+`GET /workspaces/{workspace_id}/alerts` requires an authenticated workspace member and returns
+`{ alerts: [{ channel, message, unread_count }] }`, ordered by the latest unread message, newest
+first. Each entry represents an explicitly joined channel or DM, including archived channels.
+Messages by the current user and deleted messages are excluded; thread replies are included.
+The preview is the newest unread message, with the usual message and attachment metadata.
+Channels without unread messages are omitted. Channel membership limits visibility, including
+for workspace admins; nonmembers cannot inspect private conversations.
+
+Use the existing `PUT /workspaces/{workspace_id}/channels/{channel_id}/read-cursor` with the
+preview's `message_id` to mark an entry read. Only messages through that position are marked;
+newer arrivals remain unread. The UI's bulk action applies this separately to each shown entry
+and retains failed entries for retry. This inbox uses existing read cursors and needs no migration.
+It is an in-app unread inbox, not a separate notification history or an email/push delivery service.
+
 ## Browser authentication API
 
 The versioned identity routes are:
@@ -161,3 +177,27 @@ Without all three LiveKit settings, the inbox reports `enabled: false` and creat
 Provider API keys stay on the server; only temporary participant credentials reach the browser.
 See the [call lifecycle](architecture/README.md#voice-call-lifecycle) for expiry and cleanup.
 
+
+## Conversation files
+
+Message creation accepts `attachment_ids` (up to five unique UUIDs). `body` defaults to
+an empty string; text or at least one ready attachment is required. Responses include
+`attachments: [{id, filename, size, content_type}]`, including realtime responses.
+Editing only changes text; empty text is valid while attachments remain. Deleted message
+responses contain no attachment metadata. Retry identity includes attachment IDs in order.
+
+Under `/api/v1/workspaces/{workspace_id}/channels/{channel_id}/files`:
+
+| Method and suffix | Behavior |
+| --- | --- |
+| `GET /limits` | Authenticated upload limits and enabled status |
+| `POST /` | Reserve with `{filename, size}`; returns an upload ID |
+| `PUT /{id}/content` | Raw bytes, exact reserved size; scans and marks ready |
+| `DELETE /{id}` | Cancel an unattached upload; active transfers expire if still finishing |
+| `GET /` | Shared files, newest reservations first; `limit` and `before` pagination |
+| `GET /{id}/content` | Authenticated download of a live message attachment |
+| `GET /{id}/content?preview=true` | Inline verified raster image; other types download |
+
+All mutations retain Origin and CSRF checks. Upload IDs are bound to the uploader and
+conversation; they are not public access tokens. Downloads require current membership.
+See [file-sharing operations](files.md) for storage and lifecycle details.

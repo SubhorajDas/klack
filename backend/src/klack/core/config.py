@@ -6,7 +6,7 @@ imports side-effect free and allows tests and alternate process types to inject 
 
 from enum import StrEnum
 from ipaddress import ip_address
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
 
 import idna
@@ -110,6 +110,18 @@ class Settings(DatabaseSettings):
     db_idle_in_transaction_timeout_ms: PositiveInt = 30_000
 
     healthcheck_timeout_seconds: PositiveFloat = 2.0
+
+    files_enabled: bool = True
+    files_storage: Literal["local", "s3"] = "local"
+    files_local_path: str = ".data/files"
+    files_s3_bucket: str = ""
+    files_s3_endpoint: str = ""
+    files_scan_host: str = ""
+    files_scan_port: Annotated[int, Field(ge=1, le=65535)] = 3310
+    files_max_bytes: Annotated[int, Field(ge=1, le=104857600)] = 26214400
+    files_max_attachments: Annotated[int, Field(ge=1, le=5)] = 5
+    files_workspace_quota_bytes: PositiveInt = 5368709120
+    files_uploads_per_hour: PositiveInt = 100
 
     livekit_url: str = ""
     livekit_api_key: SecretStr = SecretStr("")
@@ -306,6 +318,17 @@ class Settings(DatabaseSettings):
         if retained_row_bound > MAX_REFRESH_TOKEN_ROWS_PER_SESSION:
             msg = "configured refresh lifetime permits more than 10000 retained rows per session"
             raise ValueError(msg)
+        return self
+
+    @model_validator(mode="after")
+    def validate_file_storage(self) -> Self:
+        if self.files_enabled:
+            if self.files_storage == "s3" and not self.files_s3_bucket.strip():
+                raise ValueError("S3 file storage requires FILES_S3_BUCKET")
+            if self.app_env in (AppEnvironment.STAGING, AppEnvironment.PRODUCTION) and (
+                self.files_storage != "s3" or not self.files_scan_host.strip()
+            ):
+                raise ValueError("Production file sharing requires S3 storage and a scanner")
         return self
 
     def database_connect_args(self) -> dict[str, object]:

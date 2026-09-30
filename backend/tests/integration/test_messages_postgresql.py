@@ -28,6 +28,8 @@ from klack.modules.channels.infrastructure.models import (
     ChannelRecord,
 )
 from klack.modules.channels.infrastructure.repository import SqlAlchemyChannelRepository
+from klack.modules.files.models import FileRecord
+from klack.modules.files.service import FileService
 from klack.modules.identity.infrastructure.models import AuthSessionRecord, UserRecord
 from klack.modules.messaging.application.service import MessageService
 from klack.modules.messaging.domain.entities import Message
@@ -102,6 +104,7 @@ def _message_service(
 ) -> MessageService:
     return MessageService(
         repository=SqlAlchemyMessageRepository(session),
+        attachments=FileService(session, container.settings),
         channel_access=ChannelContentAccessService(
             repository=SqlAlchemyChannelRepository(session),
             workspace_access=WorkspaceAccessService(SqlAlchemyWorkspaceRepository(session)),
@@ -200,6 +203,9 @@ async def _seed_conversation(container: AppContainer) -> SeededConversation:
 async def _cleanup(container: AppContainer, seeded: SeededConversation) -> None:
     async with container.session_factory() as session:
         await session.execute(
+            delete(FileRecord).where(FileRecord.workspace_id == seeded.workspace_id)
+        )
+        await session.execute(
             delete(RealtimeEventRecord).where(
                 RealtimeEventRecord.workspace_id == seeded.workspace_id,
             ),
@@ -213,6 +219,49 @@ async def _cleanup(container: AppContainer, seeded: SeededConversation) -> None:
             ),
         )
         await session.commit()
+
+
+async def test_concurrent_attachment_retry_links_once(message_container: AppContainer) -> None:
+    seeded = await _seed_conversation(message_container)
+    try:
+        async with message_container.session_factory() as session:
+            upload = await FileService(session, message_container.settings).reserve(
+                seeded.owner_id, seeded.workspace_id, seeded.channel_id, "notes.txt", 5
+            )
+            upload.status = "ready"
+            upload_id = upload.id
+            await session.commit()
+        client_id = uuid4()
+
+        async def send() -> Message:
+            async with message_container.session_factory() as session:
+                return await _message_service(
+                    message_container, session, realtime=True
+                ).create_message(
+                    actor_user_id=seeded.owner_id,
+                    workspace_id=seeded.workspace_id,
+                    channel_id=seeded.channel_id,
+                    body="",
+                    attachment_ids=(upload_id,),
+                    client_message_id=client_id,
+                )
+
+        first, second = await asyncio.gather(send(), send())
+        assert first.id == second.id
+        assert first.attachments == second.attachments
+        async with message_container.session_factory() as session:
+            stored = await session.get(FileRecord, upload_id)
+            assert stored is not None and stored.message_id == first.id
+            events = (
+                await session.scalars(
+                    select(RealtimeEventRecord).where(
+                        RealtimeEventRecord.workspace_id == seeded.workspace_id
+                    )
+                )
+            ).all()
+            assert len(events) == 1
+    finally:
+        await _cleanup(message_container, seeded)
 
 
 async def test_membership_removal_revokes_access_without_deleting_authored_history(

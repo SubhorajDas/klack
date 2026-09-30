@@ -17,6 +17,7 @@ export type Channel = {
   is_member: boolean;
   archived_at: string | null;
 };
+export type Attachment = { id: string; filename: string; size: number; content_type: string };
 export type Message = {
   id: string;
   workspace_id: string;
@@ -31,6 +32,7 @@ export type Message = {
   parent_message_id?: string | null;
   reactions?: [string, string][];
   reply_count?: number;
+  attachments?: Attachment[];
 };
 export type MessagePage = { messages: Message[]; next_before: string | null };
 export type Session = {

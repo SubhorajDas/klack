@@ -59,6 +59,7 @@ The backend stack must be running for sign-in. No demo account is automatically 
 - Channel history, older-page loading, sending, editing and content-erasing deletion.
 - Paginated thread replies with independent drafts, reactions, and reply editing/deletion.
 - Private one-to-one DMs, persistent read positions, and unread badges.
+- Alerts inbox at `/w/:workspace/activity`, with unread conversation previews, channel/DM filters, search, and individual or filtered bulk mark-as-read. Refreshes every 15 seconds while visible and after observed read/message events. Thread replies are included; opening an alert opens its conversation. Read state persists on the server.
 - One-to-one LiveKit voice calls with a global incoming popup, accept/decline, mute/unmute, hang up, and a paginated Calls history tab. Configure LiveKit only in the backend's root `.env`. The signed-in call inbox polls every two seconds; closed browsers do not receive notifications.
 - Responsive DM inbox with URL-addressable conversations, member picker, and conversation/message search. Reloading a DM URL reopens that conversation.
 - Unread badges refresh after observed message/read events and every 15 seconds while the page is visible. Temporary request failures preserve the last known count.

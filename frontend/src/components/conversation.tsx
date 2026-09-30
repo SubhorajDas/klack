@@ -27,6 +27,7 @@ import { channelPath, type Channel, type Message, type User, type Membership } f
 import { useConversation } from '@/lib/use-conversation';
 import { Alert, Avatar, Empty, Loading, Modal } from './ui';
 import { CallHistory, useCalls } from './calls';
+import { FilePicker, FilesPanel, MessageAttachments, type QueuedFile } from './files';
 
 export function Conversation({
   user,
@@ -133,7 +134,12 @@ function JoinedConversation({
   const atBottom = useRef(true);
   const lastId = useRef('');
   const visible = chat.messages.filter(
-    (message) => !filter || message.body?.toLowerCase().includes(filter.toLowerCase()),
+    (message) =>
+      !filter ||
+      message.body?.toLowerCase().includes(filter.toLowerCase()) ||
+      message.attachments?.some((file) =>
+        file.filename.toLowerCase().includes(filter.toLowerCase()),
+      ),
   );
   const selected = details ? chat.messages.find((message) => message.id === details.id) : null;
   useEffect(() => {
@@ -260,7 +266,7 @@ function JoinedConversation({
               <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>
                 <Icon size={15} />
                 {label}
-                {['files', 'pinned'].includes(id) && <span className="soon-dot" />}
+                {id === 'pinned' && <span className="soon-dot" />}
               </button>
             ))}
           </div>
@@ -274,16 +280,14 @@ function JoinedConversation({
         </div>
         {tab === 'calls' ? (
           <CallHistory key={channel.id} channel={channel} user={user} />
+        ) : tab === 'files' ? (
+          chat.status === 'Access unavailable' ? (
+            <Empty title="Access unavailable">You no longer have access to these files.</Empty>
+          ) : (
+            <FilesPanel key={channel.id} channel={channel} />
+          )
         ) : tab !== 'messages' ? (
-          <Empty
-            title={
-              tab === 'files' ? 'A home for your shared files' : 'Keep important messages in view'
-            }
-          >
-            {tab === 'files'
-              ? 'File sharing is coming soon. You can share links in your messages today.'
-              : 'Pinned messages are coming soon.'}
-          </Empty>
+          <Empty title="Keep important messages in view">Pinned messages are coming soon.</Empty>
         ) : (
           <>
             {chat.status === 'Reconnecting' && (
@@ -371,6 +375,7 @@ function JoinedConversation({
                             {message.edited_at && !message.deleted_at && <small>edited</small>}
                           </header>
                           <p>{message.deleted_at ? 'This message was deleted.' : message.body}</p>
+                          <MessageAttachments message={message} />
                           <Reactions
                             message={message}
                             user={user}
@@ -480,7 +485,10 @@ function JoinedConversation({
             <Avatar name={memberName(selected.author_user_id, user)} />
             <h3>{memberName(selected.author_user_id, user)}</h3>
             <time>{new Date(selected.created_at).toLocaleString()}</time>
-            <p className="message-body">{selected.body || 'This message was deleted.'}</p>
+            <p className="message-body">
+              {selected.deleted_at ? 'This message was deleted.' : selected.body}
+            </p>
+            <MessageAttachments message={selected} />
             <div className="detail-note">
               <MessageSquare size={22} />
               <strong>Keep the conversation going</strong>
@@ -535,7 +543,7 @@ function JoinedConversation({
                 name="body"
                 defaultValue={editing.body || ''}
                 maxLength={4000}
-                required
+                required={!editing.attachments?.length}
                 autoFocus
                 rows={5}
               />
@@ -568,7 +576,7 @@ function JoinedConversation({
   );
 }
 
-type Draft = { body: string; id: string; attempted: boolean };
+type Draft = { body: string; id: string; attempted: boolean; files?: QueuedFile[] };
 function Composer({
   user,
   channel,
@@ -586,7 +594,19 @@ function Composer({
   const [draft, setDraft] = useState<Draft>(() => {
     try {
       const stored = JSON.parse(sessionStorage.getItem(storageKey) || 'null');
-      if (stored && typeof stored.body === 'string' && typeof stored.id === 'string') return stored;
+      if (stored && typeof stored.body === 'string' && typeof stored.id === 'string')
+        return {
+          ...stored,
+          files: (stored.files || []).map((file: QueuedFile) =>
+            file.attachment
+              ? file
+              : {
+                  ...file,
+                  progress: undefined,
+                  error: 'Select this file again to finish uploading.',
+                },
+          ),
+        };
     } catch {}
     return { body: '', id: crypto.randomUUID(), attempted: false };
   });
@@ -595,6 +615,10 @@ function Composer({
   const [emoji, setEmoji] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
+  const acceptFiles = useRef<(files: File[]) => void>(() => {});
+  const files = draft.files || [];
+  const filesReady = files.every((file) => !!file.attachment);
+  const canSend = filesReady && (!!draft.body.trim() || files.length > 0);
   useEffect(() => {
     try {
       sessionStorage.setItem(storageKey, JSON.stringify(draft));
@@ -604,7 +628,7 @@ function Composer({
   }, [draft, storageKey]);
   async function submit(event?: FormEvent) {
     event?.preventDefault();
-    if (!draft.body.trim() || sending.current) return;
+    if (!canSend || sending.current) return;
     sending.current = true;
     setBusy(true);
     setError('');
@@ -617,6 +641,7 @@ function Composer({
       const message = await api<Message>(path, 'POST', {
         body: draft.body,
         client_message_id: draft.id,
+        ...(files.length ? { attachment_ids: files.map((file) => file.attachment!.id) } : {}),
         ...(parent ? { parent_message_id: parent } : {}),
       });
       sent(message);
@@ -633,7 +658,7 @@ function Composer({
         failure instanceof ApiError &&
         failure.status >= 400 &&
         failure.status < 500 &&
-        failure.status !== 409
+        (failure.status !== 409 || failure.code === 'file_error')
       )
         setDraft({ ...draft, attempted: false });
     } finally {
@@ -642,7 +667,23 @@ function Composer({
     }
   }
   return (
-    <div className="composer-wrap">
+    <div
+      className="composer-wrap"
+      onDragOver={(event) => {
+        if (event.dataTransfer.types.includes('Files')) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        event.preventDefault();
+        acceptFiles.current(Array.from(event.dataTransfer.files));
+      }}
+      onPaste={(event) => {
+        const pasted = Array.from(event.clipboardData.files);
+        if (pasted.length) {
+          event.preventDefault();
+          acceptFiles.current(pasted);
+        }
+      }}
+    >
       {(error || (draft.attempted && !busy)) && (
         <div className="send-error" role="alert">
           <span>
@@ -676,6 +717,20 @@ function Composer({
               void submit();
             }
           }}
+        />
+        <FilePicker
+          path={`${channelPath(channel.workspace_id, channel.id)}/files`}
+          entries={files}
+          locked={draft.attempted || busy}
+          registerInput={(accept) => {
+            acceptFiles.current = accept;
+          }}
+          change={(change) =>
+            setDraft((current) => ({
+              ...current,
+              files: typeof change === 'function' ? change(current.files || []) : change,
+            }))
+          }
         />
         <div className="composer-bottom">
           <div className="emoji-control">
@@ -713,7 +768,7 @@ function Composer({
             <button
               className="primary send-button"
               aria-label={draft.attempted ? 'Retry send' : 'Send message'}
-              disabled={busy || !draft.body.trim()}
+              disabled={busy || !canSend}
             >
               <Send size={18} />
               <span>{busy ? 'Sending' : draft.attempted ? 'Retry' : 'Send'}</span>
@@ -1031,7 +1086,10 @@ function ThreadPanel({
         {chat.status !== 'Access unavailable' && (
           <>
             <strong>{memberName(root.author_user_id, user)}</strong>
-            <p className="message-body">{root.body || 'This message was deleted.'}</p>
+            <p className="message-body">
+              {root.deleted_at ? 'This message was deleted.' : root.body}
+            </p>
+            <MessageAttachments message={root} />
           </>
         )}
         <hr />
@@ -1062,7 +1120,8 @@ function ThreadPanel({
           <article key={m.id} className="thread-reply">
             <strong>{memberName(m.author_user_id, user)}</strong>
             <small> · {new Date(m.created_at).toLocaleString()}</small>
-            <p className="message-body">{m.body || 'This message was deleted.'}</p>
+            <p className="message-body">{m.deleted_at ? 'This message was deleted.' : m.body}</p>
+            <MessageAttachments message={m} />
             <Reactions
               message={m}
               user={user}
@@ -1131,7 +1190,12 @@ function ThreadPanel({
           >
             <Alert>{error}</Alert>
             {editing ? (
-              <textarea name="body" required maxLength={4000} defaultValue={editing.body || ''} />
+              <textarea
+                name="body"
+                required={!editing.attachments?.length}
+                maxLength={4000}
+                defaultValue={editing.body || ''}
+              />
             ) : (
               <p>This permanently removes the reply’s content.</p>
             )}
