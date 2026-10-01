@@ -5,6 +5,30 @@
 Run backend commands from the repository root and npm commands from `frontend/`.
 Examples use PowerShell.
 
+## Email verification modes
+
+Set `APP_ENV=development` in the root `.env` for local development: users may create or join
+workspaces and channels before verifying their email. `APP_ENV=production` requires a verified
+email for workspace creation, invitation acceptance, channel creation, and channel joining.
+Staging enforces the same verification requirement; automated test mode defaults to unrestricted.
+Administrator-added channel members and both participants in direct-conversation creation must
+also be verified in production and staging. Existing memberships are not removed when switching
+modes. Registration, login, email verification, password recovery, and existing content access
+remain available.
+
+Compose and host-run processes both read `APP_ENV`. After changing it, recreate the API and
+workers with `docker compose up -d --force-recreate api identity-worker files-worker`.
+Production also requires `APP_DEBUG=false`, `LOG_FORMAT=json`, `AUTH_COOKIE_SECURE=true`, HTTPS
+values for both `AUTH_TRUSTED_ORIGIN` and `AUTH_PUBLIC_WEB_ORIGIN`, and non-example application
+secrets. Production file sharing requires S3 storage and a scanner; set `FILES_ENABLED=false` if
+file sharing is not configured. The supplied Compose stack uses development servers and is for
+local use, not a complete production deployment. Keep development mode for manual testing over
+local HTTP.
+
+Blocked operations return HTTP 403 with code `email_verification_required`. Verification is
+checked against the current database state, so completing verification unlocks these actions
+without signing out or renewing the access token.
+
 ## Browser origins
 
 For the frontend, set both `AUTH_TRUSTED_ORIGIN` and `AUTH_PUBLIC_WEB_ORIGIN` to
@@ -55,7 +79,7 @@ you exercise the role and last-owner rules without an email service.
 The root `.env` supports both host and Compose workflows:
 
 - Host-run commands use `APP_ENV` and the host-facing `DATABASE_URL` directly.
-- Compose is development-only: it forces `APP_ENV=development` and builds an internal database
+- Compose defaults to development, honors `APP_ENV`, and builds an internal database
   URL from `POSTGRES_*` values.
 - The `klack-dev-seed` command is a host-run development tool and requires the separate
   `DEV_SEED_ENABLED=true` opt-in plus `DEV_SEED_PASSWORD`.

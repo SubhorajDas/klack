@@ -2,7 +2,7 @@
 
 [Documentation index](README.md) · [Architecture](architecture/README.md)
 
-The checked-in Compose stack is for development: it forces `APP_ENV=development`, mounts source,
+The checked-in Compose stack is for development: it defaults to `APP_ENV=development`, mounts source,
 and runs the API with reload. It is not a production deployment definition.
 
 ## Configuration ownership
@@ -12,6 +12,7 @@ Use [`.env.example`](../.env.example) as the configuration inventory and
 
 | Settings | Consumer and purpose |
 | --- | --- |
+| `APP_ENV` | `development` permits unverified membership creation; `production` and `staging` require verified email |
 | `DATABASE_URL` | Host processes and migration jobs; Compose constructs an internal URL from `POSTGRES_*` |
 | `DB_*` | Per-process pool limits and database timeouts |
 | `AUTH_JWT_SECRET`, `AUTH_REFRESH_SECRET`, `AUTH_ACTION_SECRET` | Distinct authentication, refresh, and action security secrets |

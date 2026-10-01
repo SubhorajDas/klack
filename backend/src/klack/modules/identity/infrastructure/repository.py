@@ -46,6 +46,10 @@ class SqlAlchemyIdentityRepository:
         statement = select(UserRecord.id).where(UserRecord.email == email)
         return (await self._session.scalar(statement)) is not None
 
+    async def get_user_by_id(self, user_id: UUID) -> User | None:
+        record = await self._session.scalar(select(UserRecord).where(UserRecord.id == user_id))
+        return None if record is None else self._user(record)
+
     async def get_user_by_email(
         self,
         email: str,

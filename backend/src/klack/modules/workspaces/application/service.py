@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
+from klack.modules.identity.application.verification import EmailVerificationGateway
 from klack.modules.workspaces.application.ports import (
     InvitationTokenManager,
     WorkspaceConflict,
@@ -131,6 +132,7 @@ class WorkspaceService:
         repository: WorkspaceRepository,
         invitation_tokens: InvitationTokenManager,
         policy: WorkspacePolicy | None = None,
+        email_verification: EmailVerificationGateway | None = None,
         clock: Callable[[], datetime] = utc_now,
         uuid_factory: Callable[[], UUID] = uuid4,
     ) -> None:
@@ -138,11 +140,14 @@ class WorkspaceService:
         self._workspace_access = WorkspaceAccessService(repository)
         self._invitation_tokens = invitation_tokens
         self._policy = policy or WorkspacePolicy()
+        self._email_verification = email_verification
         self._clock = clock
         self._uuid_factory = uuid_factory
 
     async def create_workspace(self, *, actor_user_id: UUID, name: str) -> Workspace:
         """Create a workspace and its first owner membership atomically."""
+        if self._email_verification is not None:
+            await self._email_verification.require_verified(actor_user_id)
         normalized_name = self._normalize_name(name)
         now = self._clock()
         workspace = Workspace(
@@ -464,6 +469,8 @@ class WorkspaceService:
         raw_token: str | None,
     ) -> WorkspaceMembership:
         """Consume one valid bearer invitation and create a member role atomically."""
+        if self._email_verification is not None:
+            await self._email_verification.require_verified(actor_user_id)
         presented = self._invitation_tokens.present(raw_token)
         workspace_id = await self._repository.get_invitation_workspace_id(presented.token_id)
         if workspace_id is None:

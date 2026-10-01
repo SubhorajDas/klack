@@ -112,11 +112,14 @@ class Settings(DatabaseSettings):
     healthcheck_timeout_seconds: PositiveFloat = 2.0
 
     files_enabled: bool = True
-    files_storage: Literal["local", "s3"] = "local"
+    files_storage: Literal["local", "s3", "supabase"] = "local"
     files_local_path: str = ".data/files"
     files_s3_bucket: str = ""
     files_s3_endpoint: str = ""
+    supabase_url: str = ""
+    supabase_service_role_key: SecretStr = SecretStr("")
     files_scan_host: str = ""
+    files_scan_required: bool = True
     files_scan_port: Annotated[int, Field(ge=1, le=65535)] = 3310
     files_max_bytes: Annotated[int, Field(ge=1, le=104857600)] = 26214400
     files_max_attachments: Annotated[int, Field(ge=1, le=5)] = 5
@@ -257,6 +260,11 @@ class Settings(DatabaseSettings):
             raise ValueError(msg)
         return value
 
+    @property
+    def membership_email_verification_required(self) -> bool:
+        """Keep local development open and enforce verification in deployed environments."""
+        return self.app_env in {AppEnvironment.STAGING, AppEnvironment.PRODUCTION}
+
     @model_validator(mode="after")
     def reject_unsafe_production_debug(self) -> Self:
         """Prevent unsafe debug output and non-structured production logs."""
@@ -323,12 +331,30 @@ class Settings(DatabaseSettings):
     @model_validator(mode="after")
     def validate_file_storage(self) -> Self:
         if self.files_enabled:
-            if self.files_storage == "s3" and not self.files_s3_bucket.strip():
+            if self.files_storage in {"s3", "supabase"} and not self.files_s3_bucket.strip():
                 raise ValueError("S3 file storage requires FILES_S3_BUCKET")
-            if self.app_env in (AppEnvironment.STAGING, AppEnvironment.PRODUCTION) and (
-                self.files_storage != "s3" or not self.files_scan_host.strip()
-            ):
-                raise ValueError("Production file sharing requires S3 storage and a scanner")
+            if self.files_storage == "supabase":
+                origin = urlsplit(self.supabase_url)
+                if (
+                    origin.scheme != "https"
+                    or not origin.hostname
+                    or origin.username is not None
+                    or origin.password is not None
+                    or origin.path not in {"", "/"}
+                    or origin.query
+                    or origin.fragment
+                ):
+                    raise ValueError("SUPABASE_URL must be an HTTPS origin without a path")
+                if not self.supabase_service_role_key.get_secret_value().strip():
+                    raise ValueError("Supabase storage requires SUPABASE_SERVICE_ROLE_KEY")
+            if self.app_env in (AppEnvironment.STAGING, AppEnvironment.PRODUCTION):
+                if self.files_storage not in {"s3", "supabase"}:
+                    raise ValueError("Production file sharing requires S3 or Supabase storage")
+                if self.files_scan_required and not self.files_scan_host.strip():
+                    raise ValueError(
+                        "Production file sharing requires a scanner unless "
+                        "FILES_SCAN_REQUIRED=false"
+                    )
         return self
 
     def database_connect_args(self) -> dict[str, object]:

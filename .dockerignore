@@ -1,0 +1,16 @@
+.git
+**/.env
+**/.env.*
+**/node_modules
+**/.next
+**/.next-e2e
+**/.venv
+**/__pycache__
+**/.data
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/test-results
+**/playwright-report
+**/*.log
+.docker-data

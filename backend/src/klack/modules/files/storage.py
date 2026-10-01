@@ -14,6 +14,7 @@ from PIL import Image, UnidentifiedImageError
 
 from klack.core.config import Settings
 from klack.modules.files.domain import FileError
+from klack.modules.files.supabase_storage import SupabaseFileStorage
 
 
 class FileStorage:
@@ -28,6 +29,9 @@ class FileStorage:
         return path
 
     def put(self, key: str, data: bytes) -> None:
+        if self.settings.files_storage == "supabase":
+            SupabaseFileStorage(self.settings).put(key, data)
+            return
         if self.settings.files_storage == "s3":
             with closing(
                 boto3.client(
@@ -50,6 +54,8 @@ class FileStorage:
                 target.write(data)
 
     def get(self, key: str) -> bytes:
+        if self.settings.files_storage == "supabase":
+            return SupabaseFileStorage(self.settings).get(key)
         if self.settings.files_storage == "s3":
             with closing(
                 boto3.client(
@@ -65,6 +71,9 @@ class FileStorage:
             return source.read(self.settings.files_max_bytes + 1)
 
     def delete(self, key: str) -> None:
+        if self.settings.files_storage == "supabase":
+            SupabaseFileStorage(self.settings).delete(key)
+            return
         if self.settings.files_storage == "s3":
             with closing(
                 boto3.client(

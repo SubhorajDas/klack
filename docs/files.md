@@ -33,17 +33,36 @@ including SVG and HTML, are served as downloads with `nosniff` and a restrictive
 
 ## Deployment
 
-Staging/production startup requires both S3 storage and a configured scanner when files
-are enabled. Set `FILES_ENABLED=false` if deployment is not ready for file sharing.
+For Supabase Storage, use `FILES_STORAGE=supabase`, `FILES_S3_BUCKET=klack-files`,
+`SUPABASE_URL` set to the project's HTTPS origin (without an API path), and
+`SUPABASE_SERVICE_ROLE_KEY` set to its server-only service-role key. Keep the bucket private.
+Klack uses the native Storage API with `x-upsert: false`, because the Supabase S3 endpoint
+does not enforce the conditional uploads Klack needs. The S3 access keys are not used in this
+mode. API and cleanup-worker processes need the same Supabase settings. The scanner remains
+required by default in staging/production. A 10 MiB demo limit is `FILES_MAX_BYTES=10485760`; set the
+bucket's limit to match. Supabase's free file allowance is shared across workspaces, so monitor
+total storage as well as each workspace's quota.
+
+Staging/production startup requires private S3 or Supabase storage and, by default, a
+configured scanner when files are enabled.
+Set `FILES_ENABLED=false` if deployment is not ready for file sharing.
+
+The public resume demo explicitly uses `FILES_SCAN_REQUIRED=false` with no scanner host.
+Its uploads are **not antivirus-scanned**. Private downloads, authorization, upload limits,
+verified raster-image previews, and download-only handling of other formats still apply.
+ZIP archives are never extracted by Klack. This is a documented demo limitation, not an
+equivalent replacement for antivirus scanning. Setting a scanner host always enables scanning;
+failed or unavailable scans continue to reject uploads even when the required flag is false.
 
 | Setting | Default / purpose |
 | --- | --- |
 | `FILES_ENABLED` | `true` |
-| `FILES_STORAGE` | `local` for development; `s3` for deployment |
+| `FILES_STORAGE` | `local` for development; `s3` or `supabase` for deployment |
 | `FILES_LOCAL_PATH` | `.data/files` |
 | `FILES_S3_BUCKET` | Required private bucket for S3 |
 | `FILES_S3_ENDPOINT` | Optional S3-compatible service endpoint |
 | `FILES_SCAN_HOST`, `FILES_SCAN_PORT` | ClamAV host and port (`3310`) |
+| `FILES_SCAN_REQUIRED` | `true`; explicitly set `false` for the unscanned resume demo |
 | `FILES_MAX_BYTES` | `26214400`; supported maximum 100 MiB |
 | `FILES_MAX_ATTACHMENTS` | `5`; configurable from 1 to 5 |
 | `FILES_WORKSPACE_QUOTA_BYTES` | `5368709120` (5 GiB), including reservations and pending deletion |

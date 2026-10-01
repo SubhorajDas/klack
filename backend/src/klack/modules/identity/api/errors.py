@@ -12,6 +12,7 @@ from klack.modules.identity.domain.errors import (
     AuthenticationRequired,
     CsrfValidationFailed,
     EmailAlreadyRegistered,
+    EmailVerificationRequired,
     IdentityError,
     InvalidCredentials,
     InvalidEmailActionToken,
@@ -33,6 +34,11 @@ class ErrorContract:
 
 
 ERROR_CONTRACTS: dict[type[IdentityError], ErrorContract] = {
+    EmailVerificationRequired: ErrorContract(
+        403,
+        "email_verification_required",
+        "Verify your email before creating or joining a workspace or channel.",
+    ),
     InvalidEmailAddress: ErrorContract(422, "validation_error", "The email address is invalid."),
     InvalidPassword: ErrorContract(422, "validation_error", "The password is invalid."),
     EmailAlreadyRegistered: ErrorContract(

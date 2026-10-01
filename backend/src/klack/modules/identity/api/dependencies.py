@@ -11,6 +11,7 @@ from klack.modules.identity.api.browser_security import (
     require_exact_origin,
 )
 from klack.modules.identity.application.service import IdentityService
+from klack.modules.identity.application.verification import EmailVerificationAccessService
 from klack.modules.identity.domain.entities import AuthenticatedIdentity
 from klack.modules.identity.infrastructure.repository import SqlAlchemyIdentityRepository
 
@@ -32,6 +33,22 @@ async def get_identity_service(
 
 
 IdentityServiceDependency = Annotated[IdentityService, Depends(get_identity_service)]
+
+
+async def get_email_verification_access(
+    request: Request,
+    session: Annotated[AsyncSession, Depends(get_session)],
+) -> EmailVerificationAccessService:
+    """Compose the shared durable verification boundary for membership mutations."""
+    return EmailVerificationAccessService(
+        SqlAlchemyIdentityRepository(session),
+        required=request.app.state.container.settings.membership_email_verification_required,
+    )
+
+
+EmailVerificationAccessDependency = Annotated[
+    EmailVerificationAccessService, Depends(get_email_verification_access)
+]
 
 
 async def get_current_identity(

@@ -94,6 +94,7 @@ See [voice-call architecture](docs/architecture/README.md#voice-call-lifecycle) 
 | [API guide](docs/api.md) | Authentication, authorization, messaging, realtime, and call contracts |
 | [Architecture](docs/architecture/README.md) | Runtime diagram, ownership, data model, and request flows |
 | [Operations](docs/operations.md) | Configuration, deployment, health, and failure recovery |
+| [Free Render beta](docs/render.md) | Supabase database/files, Brevo email, and demo limitations |
 | [Backend](backend/README.md) | Backend layout and implementation guarantees |
 | [Frontend](frontend/README.md) | UI behavior, state ownership, proxy, and browser tests |
 | [Architecture decisions](docs/adr/README.md) | Accepted decisions and their tradeoffs |

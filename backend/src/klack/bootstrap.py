@@ -50,6 +50,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.info("application_started")
+        if resolved_settings.files_enabled and not resolved_settings.files_scan_host:
+            logger.warning("file_antivirus_scanning_disabled")
         await container.realtime_broker.start()
         calls_task = (
             asyncio.create_task(run_call_maintenance(container.session_factory, resolved_settings))

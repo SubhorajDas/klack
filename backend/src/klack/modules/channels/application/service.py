@@ -25,6 +25,7 @@ from klack.modules.channels.domain.errors import (
     InvalidChannelName,
     TargetWorkspaceMembershipNotFound,
 )
+from klack.modules.identity.application.verification import EmailVerificationGateway
 from klack.modules.workspaces.domain.entities import WorkspaceMembership, WorkspaceRole
 
 CHANNEL_NAME_PATTERN = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*\Z")
@@ -124,12 +125,14 @@ class ChannelService:
         repository: ChannelRepository,
         workspace_access: WorkspaceAccessGateway,
         policy: ChannelPolicy | None = None,
+        email_verification: EmailVerificationGateway | None = None,
         clock: Callable[[], datetime] = utc_now,
         uuid_factory: Callable[[], UUID] = uuid4,
     ) -> None:
         self._repository = repository
         self._workspace_access = workspace_access
         self._policy = policy or ChannelPolicy()
+        self._email_verification = email_verification
         self._clock = clock
         self._uuid_factory = uuid_factory
 
@@ -142,6 +145,8 @@ class ChannelService:
         visibility: ChannelVisibility,
     ) -> ChannelView:
         """Create a channel and join its creator in one transaction."""
+        if self._email_verification is not None:
+            await self._email_verification.require_verified(actor_user_id)
         normalized_name = self._normalize_name(name)
         actor = await self._workspace_access.require_membership(
             actor_user_id=actor_user_id,
@@ -399,6 +404,8 @@ class ChannelService:
         channel_id: UUID,
     ) -> ChannelMembership:
         """Idempotently join a public channel or a manager-visible private channel."""
+        if self._email_verification is not None:
+            await self._email_verification.require_verified(actor_user_id)
         actor = await self._workspace_access.require_membership(
             actor_user_id=actor_user_id,
             workspace_id=workspace_id,
@@ -489,6 +496,8 @@ class ChannelService:
         if existing is not None:
             await self._repository.rollback()
             return existing
+        if self._email_verification is not None:
+            await self._email_verification.require_verified(target_user_id)
         created = self._new_membership(
             channel=channel,
             user_id=target_user_id,

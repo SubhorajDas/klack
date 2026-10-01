@@ -14,6 +14,7 @@ from klack.modules.channels.infrastructure.repository import SqlAlchemyChannelRe
 from klack.modules.identity.api.dependencies import (
     CurrentIdentityDependency,
     CurrentMutationIdentityDependency,
+    EmailVerificationAccessDependency,
 )
 from klack.modules.messaging.api.schemas import MessageResponse, StrictRequest
 from klack.modules.messaging.application.conversations import ConversationService
@@ -28,7 +29,10 @@ router = APIRouter(tags=["conversations"])
 
 
 async def service(
-    request: Request, response: Response, session: Annotated[AsyncSession, Depends(get_session)]
+    request: Request,
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_session)],
+    email_verification: EmailVerificationAccessDependency,
 ) -> ConversationService:
     response.headers["Cache-Control"] = "no-store"
     workspaces = WorkspaceAccessService(SqlAlchemyWorkspaceRepository(session))
@@ -42,6 +46,7 @@ async def service(
         SqlAlchemyRealtimeEventRepository(session)
         if request.app.state.container.settings.realtime_enabled
         else NullMessageEventWriter(),
+        email_verification=email_verification,
     )
 
 

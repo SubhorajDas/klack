@@ -5,6 +5,7 @@ from uuid import UUID
 from klack.modules.channels.application.ports import WorkspaceAccessGateway
 from klack.modules.channels.application.service import ChannelView
 from klack.modules.channels.domain.errors import ChannelArchived, TargetWorkspaceMembershipNotFound
+from klack.modules.identity.application.verification import EmailVerificationGateway
 from klack.modules.messaging.application.ports import (
     ChannelContentAccessGateway,
     ConversationRepository,
@@ -29,12 +30,14 @@ class ConversationService:
         access: ChannelContentAccessGateway,
         workspaces: WorkspaceAccessGateway,
         events: MessageEventWriter,
+        email_verification: EmailVerificationGateway | None = None,
     ) -> None:
         self.repository = repository
         self.messages = messages
         self.access = access
         self.workspaces = workspaces
         self.events = events
+        self.email_verification = email_verification
 
     async def open_direct(self, workspace_id: UUID, actor: UUID, target: UUID) -> ChannelView:
         # The workspace lock serializes pair creation with removal and reverse-order requests.
@@ -50,6 +53,9 @@ class ConversationService:
             is None
         ):
             raise TargetWorkspaceMembershipNotFound
+        if self.email_verification is not None:
+            await self.email_verification.require_verified(actor)
+            await self.email_verification.require_verified(target)
         channel = await self.repository.direct(workspace_id, actor, target)
         await self.repository.commit()
         return ChannelView(channel=channel, is_member=True)

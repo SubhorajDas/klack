@@ -54,6 +54,12 @@ Authenticated users can create workspaces, manage memberships according to their
 role, and generate manually shareable invitation links. Workspace authorization is read from
 PostgreSQL rather than JWT claims, so removals and role changes take effect immediately.
 
+In production and staging, workspace creation and invitation acceptance require a verified
+email. Channel creation/joining, administrator-added channel members, and both participants
+when opening a direct conversation have the same requirement. Unverified accounts receive
+HTTP 403 with code `email_verification_required`; completing email verification unlocks these
+operations immediately. Development and test environments permit unverified accounts.
+
 The versioned workspace routes are:
 
 - `POST /api/v1/workspaces`
@@ -69,9 +75,10 @@ The versioned workspace routes are:
 - `POST /api/v1/workspace-invitations/accept`
 
 Invitation links are seven-day, member-only bearer credentials by default. The API reveals a link
-only when it is created or rotated, stores only its HMAC digest, and never requires SMTP or email
-verification. The inviter must share the link through an external channel. Whoever first redeems
-the active link while authenticated becomes its member.
+only when it is created or rotated, stores only its HMAC digest, and does not send it through SMTP.
+The inviter must share the link through an external channel. Whoever first redeems the active
+link while authenticated becomes its member, subject to the environment's email-verification
+requirement. A rejected unverified attempt does not consume the invitation.
 
 ## Channel API
 

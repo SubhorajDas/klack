@@ -25,6 +25,10 @@ class AuthenticationRequired(IdentityError):
     """No valid active access session was presented."""
 
 
+class EmailVerificationRequired(IdentityError):
+    """Creating or joining a workspace or channel requires a verified mailbox."""
+
+
 class SessionExpired(IdentityError):
     """A refresh or logout credential no longer identifies an active session."""
 
