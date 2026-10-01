@@ -18,7 +18,7 @@ services:
       - key: AUTH_PASSWORD_MAX_CONCURRENCY
         value: "1"
       - key: DB_POOL_SIZE
-        value: "2"
+        value: "5"
       - key: DB_MAX_OVERFLOW
         value: "0"
       - key: REALTIME_ENABLED

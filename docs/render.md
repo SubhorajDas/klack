@@ -26,6 +26,18 @@ created service, copy its environment settings and generate those four secrets y
 Add these existing credentials in Render's **Environment** settings. Keep them out of
 GitHub, the frontend, and build arguments:
 
+Creating a Web Service manually does **not** import `render.yaml` or your local `.env`.
+For the prepared local `.env.render`, replace both `AUTH_TRUSTED_ORIGIN` and
+`AUTH_PUBLIC_WEB_ORIGIN` with the exact service URL. Open the service's **Environment**
+page, choose **Add from .env**, and paste the file contents. Choose **Save and deploy**
+to restart the existing image with those settings. `.env.render` is ignored by Git and
+excluded from Docker builds; it is only for importing settings into Render.
+
+For an already deployed service, use `DB_POOL_SIZE=5` and `DB_MAX_OVERFLOW=0` in
+Render's Environment page. The original two-connection limit can make simultaneous
+channel, unread-state, and alert requests wait for one another. This remains a bounded
+pool; each worker also has a separate pool and opens connections only as needed.
+
 | Variable | Value |
 | --- | --- |
 | `DATABASE_URL` | Supabase **Session pooler** URL, port 5432, using `postgresql+asyncpg://` |

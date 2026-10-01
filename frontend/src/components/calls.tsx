@@ -111,6 +111,11 @@ export function CallsProvider({ user, children }: { user: User; children: ReactN
         );
         if (stopped || version !== generation.current || acting.current) return;
         setEnabled(data.enabled);
+        if (!data.enabled) {
+          update(null);
+          stopped = true;
+          return;
+        }
         lastControl.current = Date.now();
         if (data.calls[0] && endedLocally.current.has(data.calls[0].id)) {
           await control(data.calls[0].id, 'end');

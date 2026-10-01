@@ -169,6 +169,22 @@ test('incoming popup can be declined from anywhere and missed calls remain in hi
   await page.screenshot({ path: 'test-results/call-history-mobile.png' });
 });
 
+test('disabled voice calls stop background inbox polling', async ({ page, context }) => {
+  let requests = 0;
+  await context.route(/\/api\/v1\/calls\?device_id=/, (route) => {
+    requests++;
+    return route.fulfill({ json: { enabled: false, calls: [] } });
+  });
+  await login(page);
+  await expect.poll(() => requests).toBeGreaterThan(0);
+  // Development Strict Mode may mount twice; count after initial requests settle.
+  await page.waitForTimeout(500);
+  const initialRequests = requests;
+  // Observe more than two normal polling intervals; the disabled feature stays quiet.
+  await page.waitForTimeout(5500);
+  expect(requests).toBe(initialRequests);
+});
+
 test('microphone denial prevents an outgoing call', async ({ page, context }) => {
   const state: State = { call: null, history: [], actions: [] };
   await routes(context, state);

@@ -231,19 +231,22 @@ class SqlAlchemyIdentityRepository:
         user_id: UUID,
         now: datetime,
     ) -> AuthenticatedIdentity | None:
-        record = await self._session.scalar(
-            select(AuthSessionRecord).where(
-                AuthSessionRecord.id == session_id,
-                AuthSessionRecord.user_id == user_id,
-                AuthSessionRecord.revoked_at.is_(None),
-                AuthSessionRecord.expires_at > now,
-            ),
-        )
-        if record is None:
+        row = (
+            await self._session.execute(
+                select(AuthSessionRecord, UserRecord)
+                .join(UserRecord, UserRecord.id == AuthSessionRecord.user_id)
+                .where(
+                    AuthSessionRecord.id == session_id,
+                    AuthSessionRecord.user_id == user_id,
+                    AuthSessionRecord.revoked_at.is_(None),
+                    AuthSessionRecord.expires_at > now,
+                    UserRecord.disabled_at.is_(None),
+                )
+            )
+        ).first()
+        if row is None:
             return None
-        user_record = await self._session.get(UserRecord, user_id)
-        if user_record is None or user_record.disabled_at is not None:
-            return None
+        record, user_record = row
         return AuthenticatedIdentity(
             user=self._user(user_record),
             session=self._auth_session(record),
