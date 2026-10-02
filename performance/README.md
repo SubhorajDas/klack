@@ -1,5 +1,9 @@
 # Weighted collaboration load test
 
+For the deployed demo's authentication and connection-pool optimization, see
+[Render beta latency improvement](render-beta-latency.md). That report uses small
+production log samples and is separate from the local load test below.
+
 Run from PowerShell with Docker Desktop and the local application running:
 
 ```powershell

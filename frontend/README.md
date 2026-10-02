@@ -16,6 +16,7 @@ See the [full-app quick start](../README.md#quick-start), [API contracts](../doc
 | `src/components/direct-messages.tsx` | DM inbox, selection, and search |
 | `src/components/calls.tsx` | Global call inbox, controls, LiveKit media, and heartbeat cleanup |
 | `src/lib/api.ts` | HTTP requests, CSRF headers, and session recovery |
+| `src/lib/api-cache.ts` | Browser-only Redux metadata cache and concurrent request sharing |
 | `src/lib/use-conversation.ts` | History loading, pagination, realtime reconciliation, and reconnects |
 | `src/lib/messages.ts` | Merge by ID/revision and order messages |
 | `next.config.ts` | Same-origin API forwarding |
@@ -26,6 +27,15 @@ call notifications use a separate HTTP inbox and voice media connects directly t
 The global call provider survives conversation navigation; reloading the page ends its media
 connection. Drafts and uncertain sends are tab-local and isolated by conversation and user.
 For request and recovery flows, see the [architecture guide](../docs/architecture/README.md).
+
+Workspace, channel, DM, member, and invitation lists share a Redux Toolkit cache through
+the existing API helper. Identical requests (including query parameters and session-recovery
+policy) reuse successful responses for 10 seconds and share in-flight requests. The cache
+holds at most 100 entries in memory; it is not persisted across reloads. Successful mutations,
+sign-out events, and authorization failures clear it, and pending responses cannot repopulate
+a cleared cache. Failed requests are retried on the next read. Session and membership checks,
+message history, alerts, unread counts, files, and calls always fetch fresh data. Existing
+15-second roster and DM polling therefore continues to reach the backend.
 
 ## Run locally
 

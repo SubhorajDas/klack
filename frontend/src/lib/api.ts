@@ -1,3 +1,5 @@
+import { getBrowserApiCache, isCacheable } from './api-cache';
+
 export class ApiError extends Error {
   constructor(
     public status: number,
@@ -68,7 +70,7 @@ export function refreshSession() {
   return refreshing;
 }
 
-export async function api<T>(
+async function request<T>(
   path: string,
   method = 'GET',
   body?: unknown,
@@ -90,6 +92,26 @@ export async function api<T>(
     }
   }
   return decode<T>(response);
+}
+
+export async function api<T>(
+  path: string,
+  method = 'GET',
+  body?: unknown,
+  recover = true,
+): Promise<T> {
+  const cache = getBrowserApiCache();
+  try {
+    const data =
+      method === 'GET' && isCacheable(path) && cache
+        ? await cache.read<T>(`${recover}:${path}`, () => request<T>(path, method, body, recover))
+        : await request<T>(path, method, body, recover);
+    if (method !== 'GET') cache?.clear();
+    return data;
+  } catch (error) {
+    if (error instanceof ApiError && [401, 403].includes(error.status)) cache?.clear();
+    throw error;
+  }
 }
 
 export const errorMessage = (error: unknown) =>

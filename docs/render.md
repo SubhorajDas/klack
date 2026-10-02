@@ -38,6 +38,9 @@ Render's Environment page. The original two-connection limit can make simultaneo
 channel, unread-state, and alert requests wait for one another. This remains a bounded
 pool; each worker also has a separate pool and opens connections only as needed.
 
+The reasoning, validation, and observed before/after timings for this change are
+recorded in [Render beta latency improvement](../performance/render-beta-latency.md).
+
 | Variable | Value |
 | --- | --- |
 | `DATABASE_URL` | Supabase **Session pooler** URL, port 5432, using `postgresql+asyncpg://` |

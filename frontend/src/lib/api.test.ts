@@ -4,7 +4,7 @@ import { api, ApiError } from './api';
 function setup() {
   vi.stubGlobal('document', { cookie: 'klack_csrf=csrf-value' });
   vi.stubGlobal('navigator', {});
-  vi.stubGlobal('window', { dispatchEvent: vi.fn() });
+  vi.stubGlobal('window', { dispatchEvent: vi.fn(), addEventListener: vi.fn() });
 }
 afterEach(() => vi.unstubAllGlobals());
 describe('browser API transport', () => {

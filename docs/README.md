@@ -12,6 +12,7 @@ Start with the [project README](../README.md) to run the full application.
 | Change UI behavior or run browser tests | [Frontend guide](../frontend/README.md) |
 | Understand why a design was chosen | [Architecture decision records](adr/README.md) |
 | Exercise concurrent HTTP traffic | [Performance guide](../performance/README.md) |
+| Review the beta latency optimization and its evidence | [Render beta latency improvement](../performance/render-beta-latency.md) |
 
 The architecture overview describes the implemented system. ADRs preserve the context and
 tradeoffs of individual decisions; planned capabilities mentioned in them are not necessarily
