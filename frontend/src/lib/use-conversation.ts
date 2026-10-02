@@ -2,11 +2,17 @@
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from './api';
 import { mergeMessages } from './messages';
+import { getBrowserApiCache } from './api-cache';
+import { useCachedData } from './use-cached-data';
 import { channelPath, type Message, type MessagePage, type User } from './types';
 
 export function useConversation(workspace: string, channel: string, parent?: string) {
   const path = `${channelPath(workspace, channel)}/messages`;
   const query = parent ? `&parent_message_id=${parent}` : '';
+  const cacheKey = `conversation:${path}${parent ? `?parent=${parent}` : ''}`;
+  const preview = useCachedData<MessagePage>(cacheKey);
+  const cache = getBrowserApiCache();
+  const cacheSession = useRef(cache?.session());
   const [messages, setMessages] = useState<Message[]>([]);
   const [next, setNext] = useState<string | null>(null);
   const [status, setStatus] = useState('Connecting');
@@ -18,6 +24,18 @@ export function useConversation(workspace: string, channel: string, parent?: str
   const alive = useRef(true);
   const readable = useRef(true);
   const historyEpoch = useRef(0);
+
+  useEffect(() => {
+    if (!loading && readable.current && alive.current && cacheSession.current !== undefined) {
+      // Only keep the newest page as a navigation preview. Every visit still
+      // fetches an authoritative snapshot and subscribes to live revisions.
+      cache?.write(
+        cacheKey,
+        { messages: messages.slice(-50), next_before: null },
+        cacheSession.current,
+      );
+    }
+  }, [cache, cacheKey, loading, messages, next]);
 
   function merge(incoming: Message[]) {
     if (!alive.current || !readable.current) return;
@@ -36,6 +54,11 @@ export function useConversation(workspace: string, channel: string, parent?: str
     let snapshotSequence = 0;
     alive.current = true;
     readable.current = true;
+    const previous = cache?.peek<MessagePage>(cacheKey);
+    if (previous) {
+      setMessages(previous.messages);
+      setNext(null);
+    }
 
     async function snapshot(version: number, live: boolean) {
       const sequence = ++snapshotSequence;
@@ -65,6 +88,7 @@ export function useConversation(workspace: string, channel: string, parent?: str
     function revoke() {
       denied = true;
       readable.current = false;
+      cache?.remove(cacheKey);
       historyEpoch.current++;
       setMessages([]);
       setNext(null);
@@ -167,5 +191,15 @@ export function useConversation(workspace: string, channel: string, parent?: str
       if (alive.current) setPaging(false);
     }
   }
-  return { messages, next, status, error, loading, paging, older, merge, path };
+  return {
+    messages: loading && preview ? preview.messages : messages,
+    next: loading ? null : next,
+    status,
+    error,
+    loading: loading && !preview,
+    paging,
+    older,
+    merge,
+    path,
+  };
 }

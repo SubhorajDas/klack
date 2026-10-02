@@ -2,7 +2,8 @@
 import { useEffect, useState } from 'react';
 import { MessageCircle, Plus, Search, Lock } from 'lucide-react';
 import { useMemberName } from '@/lib/member-names';
-import { api, errorMessage } from '@/lib/api';
+import { api, ApiError, errorMessage } from '@/lib/api';
+import { useCachedApiData } from '@/lib/use-cached-data';
 import { workspacePath, type Channel, type Membership, type User } from '@/lib/types';
 import { Conversation } from './conversation';
 import { Alert, Avatar, Empty, Loading, Modal } from './ui';
@@ -21,15 +22,22 @@ export function DirectMessages({
   filter: string;
 }) {
   const memberName = useMemberName();
-  const [channels, setChannels] = useState<Channel[]>([]);
-  const [members, setMembers] = useState<Membership[]>([]);
+  const path = `${workspacePath(workspace)}/direct-messages`;
+  const cachedDms = useCachedApiData<{ channels: Channel[] }>(path);
+  const cachedMembers = useCachedApiData<{ memberships: Membership[] }>(
+    `${workspacePath(workspace)}/memberships`,
+  );
+  const [channelList, setChannels] = useState<Channel[]>(cachedDms?.channels ?? []);
+  const [memberList, setMembers] = useState<Membership[]>(cachedMembers?.memberships ?? []);
+  const channels = cachedDms?.channels ?? channelList;
+  const members = cachedMembers?.memberships ?? memberList;
   const [error, setError] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [fetching, setLoading] = useState(true);
+  const loading = fetching && !cachedDms && !channelList.length;
   const [busy, setBusy] = useState(false);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
   const [attempt, setAttempt] = useState(0);
-  const path = `${workspacePath(workspace)}/direct-messages`;
   function named(channel: Channel): Channel {
     const peer =
       channel.direct_key?.split(':').find((id) => id !== user.id.replaceAll('-', '')) || '';
@@ -51,7 +59,13 @@ export function DirectMessages({
         }
       })
       .catch((e) => {
-        if (!stopped) setError(errorMessage(e));
+        if (!stopped) {
+          setError(errorMessage(e));
+          if (e instanceof ApiError && [401, 403, 404].includes(e.status)) {
+            setChannels([]);
+            setMembers([]);
+          }
+        }
       })
       .finally(() => {
         if (!stopped) setLoading(false);
@@ -62,7 +76,11 @@ export function DirectMessages({
         .then((data) => {
           if (!stopped) setChannels(data.channels);
         })
-        .catch(() => {
+        .catch((failure) => {
+          if (!stopped && failure instanceof ApiError && [401, 403, 404].includes(failure.status)) {
+            setChannels([]);
+            setMembers([]);
+          }
           /* Keep the last successful list during a temporary outage. */
         });
     };

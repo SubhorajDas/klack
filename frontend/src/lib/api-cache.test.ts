@@ -31,6 +31,30 @@ describe('Redux API cache', () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
+  it('retains expired snapshots for immediate rendering while revalidating', async () => {
+    vi.useFakeTimers();
+    const cache = createApiCache();
+    await cache.read('visited', async () => ({ name: 'Old name' }));
+    vi.advanceTimersByTime(CACHE_TTL_MS + 1);
+    await cache.read('other', async () => 'another screen');
+    expect(cache.peek('visited')).toEqual({ name: 'Old name' });
+    await cache.read('visited', async () => ({ name: 'New name' }));
+    expect(cache.peek('visited')).toEqual({ name: 'New name' });
+  });
+
+  it('retains conversation previews on metadata changes but clears them on sign-out', () => {
+    const cache = createApiCache();
+    const session = cache.session();
+    cache.write('conversation:one', { messages: [] }, session);
+    cache.write('true:/workspaces', { workspaces: [] });
+    cache.invalidateMetadata();
+    expect(cache.peek('true:/workspaces')).toBeUndefined();
+    expect(cache.peek('conversation:one')).toEqual({ messages: [] });
+    cache.clear();
+    cache.write('conversation:one', { messages: ['old account'] }, session);
+    expect(cache.peek('conversation:one')).toBeUndefined();
+  });
+
   it('isolates keys and bounds retained responses', async () => {
     const cache = createApiCache();
     for (let i = 0; i < 101; i++) await cache.read(`workspace-${i}`, async () => i);
@@ -103,6 +127,16 @@ describe('API cache integration', () => {
     browser.dispatchEvent(new Event('klack:signed-out'));
     await api('/workspaces');
     expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves metadata after message, call, and read-cursor activity', async () => {
+    const { fetcher } = setup();
+    await api('/workspaces');
+    await api('/workspaces/a/channels/b/read-cursor', 'PUT', { message_id: 'one' });
+    await api('/workspaces/a/channels/b/messages', 'POST', { body: 'hello' });
+    await api('/calls/one/heartbeat', 'POST');
+    await api('/workspaces');
+    expect(fetcher).toHaveBeenCalledTimes(4);
   });
 
   it('keeps query variants separate and leaves realtime reads fresh', async () => {

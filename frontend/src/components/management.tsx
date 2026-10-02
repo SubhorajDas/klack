@@ -13,7 +13,8 @@ import {
   UserRound,
 } from 'lucide-react';
 import { useMemberName } from '@/lib/member-names';
-import { api, errorMessage } from '@/lib/api';
+import { api, ApiError, errorMessage } from '@/lib/api';
+import { useCachedApiData } from '@/lib/use-cached-data';
 import {
   workspacePath,
   type User,
@@ -36,11 +37,17 @@ export function People({
   leave: () => void;
 }) {
   const memberName = useMemberName();
-  const [members, setMembers] = useState<Membership[]>([]);
-  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const path = workspacePath(workspace.id);
+  const cachedMembers = useCachedApiData<{ memberships: Membership[] }>(`${path}/memberships`);
+  const cachedInvitations = useCachedApiData<{ invitations: Invitation[] }>(`${path}/invitations`);
+  const [memberList, setMembers] = useState<Membership[]>([]);
+  const [invitationList, setInvitations] = useState<Invitation[]>([]);
+  const members = cachedMembers?.memberships ?? memberList;
+  const invitations = cachedInvitations?.invitations ?? invitationList;
   const [tab, setTab] = useState('members');
   const [filter, setFilter] = useState('');
-  const [loading, setLoading] = useState(true);
+  const [fetching, setLoading] = useState(true);
+  const loading = fetching && !cachedMembers && !memberList.length;
   const [error, setError] = useState('');
   const [invite, setInvite] = useState(false);
   const [inviteUrl, setInviteUrl] = useState('');
@@ -51,7 +58,6 @@ export function People({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [revision, setRevision] = useState(0);
   const manager = role === 'owner' || role === 'admin';
-  const path = workspacePath(workspace.id);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -69,7 +75,13 @@ export function People({
         }
       })
       .catch((failure) => {
-        if (active) setError(errorMessage(failure));
+        if (active) {
+          setError(errorMessage(failure));
+          if (failure instanceof ApiError && [401, 403, 404].includes(failure.status)) {
+            setMembers([]);
+            setInvitations([]);
+          }
+        }
       })
       .finally(() => {
         if (active) setLoading(false);

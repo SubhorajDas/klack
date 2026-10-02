@@ -30,12 +30,19 @@ For request and recovery flows, see the [architecture guide](../docs/architectur
 
 Workspace, channel, DM, member, and invitation lists share a Redux Toolkit cache through
 the existing API helper. Identical requests (including query parameters and session-recovery
-policy) reuse successful responses for 10 seconds and share in-flight requests. The cache
-holds at most 100 entries in memory; it is not persisted across reloads. Successful mutations,
-sign-out events, and authorization failures clear it, and pending responses cannot repopulate
-a cleared cache. Failed requests are retried on the next read. Session and membership checks,
-message history, alerts, unread counts, files, and calls always fetch fresh data. Existing
-15-second roster and DM polling therefore continues to reach the backend.
+policy) reuse successful responses for 10 seconds and share in-flight requests. After that,
+visited screens render the retained snapshot immediately while fetching fresh data in the
+background. Loading placeholders are reserved for screens without cached data. The cache
+holds at most 100 entries in memory; it is not persisted across reloads. Metadata mutations
+invalidate metadata, while messages, read cursors, files, and calls preserve it. Sign-out and
+authorization failures clear all cached data, and pending responses cannot repopulate a
+cleared cache. Failed requests are retried on the next read. Conversations retain the latest
+50 messages as a navigation preview, isolated by workspace/channel/thread, and always load
+an authoritative HTTP snapshot alongside live reconciliation on every visit. Revocation
+removes the preview. Session and membership checks, message history requests, alerts, unread
+counts, files, and calls always fetch fresh data. Existing 15-second roster and DM polling
+therefore continues to reach the backend. A full reload still verifies the session before
+displaying workspace data.
 
 ## Run locally
 

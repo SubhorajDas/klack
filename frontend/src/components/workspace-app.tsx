@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent, type SetStateAction } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   Home,
@@ -23,6 +23,7 @@ import {
   LayoutGrid,
 } from 'lucide-react';
 import { api, ApiError, errorMessage } from '@/lib/api';
+import { useCachedApiData } from '@/lib/use-cached-data';
 import {
   workspacePath,
   type Channel,
@@ -54,9 +55,25 @@ export function WorkspaceApp({
   const routeChannel = parts[3] === 'channel' ? parts[4] : undefined;
   const routeDirect = parts[3] === 'dms' ? parts[4] : undefined;
   const routeView = (pathname === '/settings' ? 'settings' : parts[3]) as View | undefined;
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [workspaceId, setWorkspaceId] = useState('');
-  const [channels, setChannels] = useState<Channel[]>([]);
+  const cachedWorkspaces = useCachedApiData<{ workspaces: Workspace[] }>('/workspaces');
+  const [workspaceList, setWorkspaces] = useState<Workspace[]>([]);
+  const workspaces = cachedWorkspaces?.workspaces ?? workspaceList;
+  const [selectedWorkspaceId, setWorkspaceId] = useState(routeWorkspace || '');
+  const workspaceId = selectedWorkspaceId || workspaces[0]?.id || '';
+  const cachedChannels = useCachedApiData<{ channels: Channel[] }>(
+    `${workspacePath(workspaceId)}/channels?include_archived=true`,
+  );
+  const [channelList, setChannelList] = useState<{ workspace: string; channels: Channel[] }>();
+  const channels =
+    cachedChannels?.channels ??
+    (channelList?.workspace === workspaceId ? channelList.channels : []);
+  const hasChannels = !!cachedChannels || channelList?.workspace === workspaceId;
+  function setChannels(next: SetStateAction<Channel[]>) {
+    setChannelList({
+      workspace: workspaceId,
+      channels: typeof next === 'function' ? next(channels) : next,
+    });
+  }
   const [role, setRole] = useState<Membership['role']>('member');
   const [view, setView] = useState<View>('home');
   const [channelId, setChannelId] = useState('');
@@ -87,7 +104,10 @@ export function WorkspaceApp({
         setError('');
       })
       .catch((failure) => {
-        if (!cancelled) setError(errorMessage(failure));
+        if (!cancelled) {
+          setError(errorMessage(failure));
+          if (failure instanceof ApiError && [401, 403].includes(failure.status)) setWorkspaces([]);
+        }
       })
       .finally(() => {
         if (!cancelled) setLoading(false);
@@ -105,7 +125,6 @@ export function WorkspaceApp({
     }
     let cancelled = false;
     setWorkspaceLoading(true);
-    setChannels([]);
     setRole('member');
     setError('');
     Promise.all([
@@ -119,7 +138,13 @@ export function WorkspaceApp({
         }
       })
       .catch((failure) => {
-        if (!cancelled) setError(errorMessage(failure));
+        if (!cancelled) {
+          setError(errorMessage(failure));
+          if (failure instanceof ApiError && [401, 403, 404].includes(failure.status)) {
+            setChannelList(undefined);
+            setRole('member');
+          }
+        }
       })
       .finally(() => {
         if (!cancelled) setWorkspaceLoading(false);
@@ -197,7 +222,7 @@ export function WorkspaceApp({
     { key: 'activity', label: 'Alerts', icon: Bell },
     { key: 'saved', label: 'Saved', icon: Bookmark },
   ] as const;
-  if (loading && !workspaces.length)
+  if (loading && !cachedWorkspaces && !workspaceList.length)
     return (
       <main className="boot">
         <Logo />
@@ -448,7 +473,7 @@ export function WorkspaceApp({
                 Join with an invite <ArrowRight size={17} />
               </button>
             </section>
-          ) : workspaceLoading ? (
+          ) : workspaceLoading && !hasChannels ? (
             <Loading label="Opening workspace…" />
           ) : view === 'channel' ? (
             channel ? (

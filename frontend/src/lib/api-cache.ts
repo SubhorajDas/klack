@@ -10,9 +10,8 @@ const cache = createSlice({
   reducers: {
     received(state, action: PayloadAction<{ key: string; data: unknown; now: number }>) {
       const { key, data, now } = action.payload;
-      for (const [name, entry] of Object.entries(state.entries)) {
-        if (entry.expiresAt <= now) delete state.entries[name];
-      }
+      // Expiry controls fetching, not rendering. Retain bounded stale snapshots
+      // so a visited screen can render immediately while it revalidates.
       delete state.entries[key];
       state.entries[key] = { data, expiresAt: now + CACHE_TTL_MS };
       const keys = Object.keys(state.entries);
@@ -22,6 +21,14 @@ const cache = createSlice({
     },
     cleared(state) {
       state.entries = {};
+    },
+    metadataInvalidated(state) {
+      for (const key of Object.keys(state.entries)) {
+        if (!key.startsWith('conversation:')) delete state.entries[key];
+      }
+    },
+    removed(state, action: PayloadAction<string>) {
+      delete state.entries[action.payload];
     },
   },
 });
@@ -41,11 +48,31 @@ export function createApiCache() {
   const store = configureStore({ reducer: { apiCache: cache.reducer }, devTools: false });
   const pending = new Map<string, Promise<unknown>>();
   let generation = 0;
+  let session = 0;
 
   return {
     store,
+    session() {
+      return session;
+    },
+    peek<T>(key: string) {
+      return store.getState().apiCache.entries[key]?.data as T | undefined;
+    },
+    write(key: string, data: unknown, expectedSession = session) {
+      if (expectedSession !== session) return;
+      store.dispatch(cache.actions.received({ key, data, now: Date.now() }));
+    },
+    remove(key: string) {
+      store.dispatch(cache.actions.removed(key));
+    },
+    invalidateMetadata() {
+      generation++;
+      pending.clear();
+      store.dispatch(cache.actions.metadataInvalidated());
+    },
     clear() {
       generation++;
+      session++;
       pending.clear();
       store.dispatch(cache.actions.cleared());
     },

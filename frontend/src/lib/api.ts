@@ -106,7 +106,13 @@ export async function api<T>(
       method === 'GET' && isCacheable(path) && cache
         ? await cache.read<T>(`${recover}:${path}`, () => request<T>(path, method, body, recover))
         : await request<T>(path, method, body, recover);
-    if (method !== 'GET') cache?.clear();
+    if (method !== 'GET') {
+      if (path.startsWith('/auth/')) cache?.clear();
+      // Activity does not change workspace metadata. In particular, marking
+      // messages read must not discard every previously visited screen.
+      else if (!/\/(messages|read-cursor|calls|files)(\/|$)/.test(path))
+        cache?.invalidateMetadata();
+    }
     return data;
   } catch (error) {
     if (error instanceof ApiError && [401, 403].includes(error.status)) cache?.clear();

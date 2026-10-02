@@ -1,7 +1,8 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
-import { api } from './api';
+import { api, ApiError } from './api';
+import { useCachedApiData } from './use-cached-data';
 import { memberName, workspacePath, type Membership, type User } from './types';
 
 const MemberNames = createContext<Membership[]>([]);
@@ -14,6 +15,9 @@ export function MemberNamesProvider({
   children: ReactNode;
 }) {
   const [members, setMembers] = useState<Membership[]>([]);
+  const cached = useCachedApiData<{ memberships: Membership[] }>(
+    `${workspacePath(workspace)}/memberships`,
+  );
   useEffect(() => {
     if (!workspace) return;
     let stopped = false;
@@ -23,7 +27,9 @@ export function MemberNamesProvider({
           `${workspacePath(workspace)}/memberships`,
         );
         if (!stopped) setMembers(data.memberships);
-      } catch {
+      } catch (failure) {
+        if (!stopped && failure instanceof ApiError && [401, 403, 404].includes(failure.status))
+          setMembers([]);
         // Keep the last known names during a temporary connection failure.
       }
     }
@@ -39,7 +45,9 @@ export function MemberNamesProvider({
       document.removeEventListener('visibilitychange', onVisible);
     };
   }, [workspace]);
-  return <MemberNames.Provider value={members}>{children}</MemberNames.Provider>;
+  return (
+    <MemberNames.Provider value={cached?.memberships ?? members}>{children}</MemberNames.Provider>
+  );
 }
 
 export function useMemberName() {
