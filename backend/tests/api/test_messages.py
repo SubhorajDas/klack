@@ -197,7 +197,7 @@ async def test_message_routes_map_requests_and_responses(message_api: MessageApi
             **common,
             "body": "hello",
             "client_message_id": None,
-            "parent_message_id": None,
+            "reply_to_message_id": None,
             "attachment_ids": (),
         }
     ]
@@ -230,7 +230,7 @@ async def test_create_maps_client_message_id_for_retry_reconciliation(
             "channel_id": CHANNEL_ID,
             "body": "hello",
             "client_message_id": client_message_id,
-            "parent_message_id": None,
+            "reply_to_message_id": None,
             "attachment_ids": (),
         },
     ]

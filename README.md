@@ -1,6 +1,6 @@
 # Klack
 
-Klack is a collaboration app with workspaces, channels, threaded messaging, private direct
+Klack is a collaboration app with workspaces, channels, quoted replies, private direct
 messages, and one-to-one voice calls. It combines a Next.js/React frontend with a Python/FastAPI
 modular monolith and PostgreSQL. LiveKit provides optional voice media transport.
 
@@ -9,11 +9,11 @@ modular monolith and PostgreSQL. LiveKit provides optional voice media transport
 - Account registration, secure browser sessions, email verification, password recovery, and session management.
 - Workspaces with owner/admin/member roles and single-use invitation links.
 - Public and private channels with explicit membership and reversible archival.
-- Durable messages with pagination, edits, content-erasing deletion, threads, and reactions.
+- Durable messages with pagination, edits, content-erasing deletion, quoted replies, and reactions.
 - Retry-safe sends and authenticated realtime delivery across API processes.
-- Private file sharing in channels, DMs, and threads, with upload progress, image previews, and downloads.
+- Private file sharing in channels, DMs, and quoted replies, with upload progress, image previews, and downloads.
 - Private one-to-one DMs, persistent read positions, and unread counts.
-- Alerts inbox for unread channel messages, DMs, and thread replies, with search and mark-as-read actions.
+- Alerts inbox for unread channel messages, DMs, and quoted replies, with search and mark-as-read actions.
 - Voice calls with accept/decline, microphone controls, history, and incoming notifications while the app is open.
 - Responsive desktop/mobile layouts and tab-local message drafts.
 

@@ -40,7 +40,7 @@ async def create_message(
         channel_id=channel_id,
         body=payload.body,
         client_message_id=payload.client_message_id,
-        parent_message_id=payload.parent_message_id,
+        reply_to_message_id=payload.reply_to_message_id,
         attachment_ids=tuple(payload.attachment_ids),
     )
     response.headers["Cache-Control"] = "no-store"
@@ -58,7 +58,7 @@ async def list_messages(
     service: MessageServiceDependency,
     identity: CurrentIdentityDependency,
     before: UUID | None = None,
-    parent_message_id: UUID | None = None,
+    around: UUID | None = None,
     limit: Annotated[int, Query(ge=1, le=100)] = 50,
 ) -> MessagesResponse:
     """List one reverse-chronological page of channel history."""
@@ -67,7 +67,7 @@ async def list_messages(
         workspace_id=workspace_id,
         channel_id=channel_id,
         before=before,
-        **({"parent_message_id": parent_message_id} if parent_message_id else {}),
+        **({"around": around} if around else {}),
         limit=limit,
     )
     response.headers["Cache-Control"] = "no-store"

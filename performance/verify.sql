@@ -15,7 +15,7 @@ SELECT json_build_object(
   'public_channels', (SELECT count(*) FROM channels WHERE direct_key IS NULL),
   'dm_conversations', (SELECT count(*) FROM channels WHERE direct_key IS NOT NULL),
   'messages', (SELECT count(*) FROM messages),
-  'thread_replies', (SELECT count(*) FROM messages WHERE parent_message_id IS NOT NULL),
+  'quoted_replies', (SELECT count(*) FROM messages WHERE reply_to_message_id IS NOT NULL),
   'dm_messages', (SELECT count(*) FROM messages m JOIN channels c ON m.channel_id=c.id WHERE c.direct_key IS NOT NULL),
   'message_authors', (SELECT count(DISTINCT author_user_id) FROM messages),
   'reactions', (SELECT count(*) FROM message_reactions r JOIN messages m ON r.message_id=m.id),

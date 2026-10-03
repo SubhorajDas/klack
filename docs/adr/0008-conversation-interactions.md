@@ -1,6 +1,6 @@
 # 0008: Threads, reactions, read positions, and direct conversations
 
-Status: Accepted
+Status: Accepted; thread behavior superseded by [0010](0010-inline-quoted-replies.md).
 
 Threads use a nullable, same-channel foreign key to a root message. Application validation
 rejects replies to replies. Root history excludes replies; thread history uses the existing
@@ -26,3 +26,5 @@ same conversation and its history. Group DMs and self-DMs are outside this slice
 Migration 20260925_0007 is additive. Existing channel messages become root messages, existing
 channels have no direct pair key, and users without a read cursor have all other authors' live
 messages counted as unread. Deploy the migration before deploying the new API/frontend.
+
+Workspace-scoped DM identity and workspace-removal revocation are superseded by [ADR 0011](0011-personal-direct-messages.md).

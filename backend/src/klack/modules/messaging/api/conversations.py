@@ -22,6 +22,7 @@ from klack.modules.messaging.application.ports import NullMessageEventWriter
 from klack.modules.messaging.infrastructure.conversations import SqlAlchemyConversationRepository
 from klack.modules.messaging.infrastructure.repository import SqlAlchemyMessageRepository
 from klack.modules.realtime.infrastructure.repository import SqlAlchemyRealtimeEventRepository
+from klack.modules.workspaces.api.schemas import MembershipResponse, MembershipsResponse
 from klack.modules.workspaces.application.service import WorkspaceAccessService
 from klack.modules.workspaces.infrastructure.repository import SqlAlchemyWorkspaceRepository
 
@@ -74,6 +75,86 @@ class AlertResponse(BaseModel):
 
 class AlertsResponse(BaseModel):
     alerts: list[AlertResponse]
+
+
+@router.get("/direct-messages", response_model=ChannelsResponse)
+async def global_direct(service: Service, identity: CurrentIdentityDependency) -> ChannelsResponse:
+    return ChannelsResponse(
+        channels=[
+            ChannelResponse.from_view(c) for c in await service.global_direct(identity.user.id)
+        ]
+    )
+
+
+@router.post("/direct-messages", response_model=ChannelResponse)
+async def open_global_direct(
+    payload: DirectRequest, service: Service, identity: CurrentMutationIdentityDependency
+) -> ChannelResponse:
+    return ChannelResponse.from_view(
+        await service.open_global_direct(identity.user.id, payload.user_id)
+    )
+
+
+@router.get("/direct-messages/{channel_id}", response_model=ChannelResponse)
+async def resolve_global_direct(
+    channel_id: UUID, service: Service, identity: CurrentIdentityDependency
+) -> ChannelResponse:
+    return ChannelResponse.from_view(await service.resolve_direct(channel_id, identity.user.id))
+
+
+@router.get("/contacts", response_model=MembershipsResponse)
+async def global_contacts(
+    service: Service, identity: CurrentIdentityDependency
+) -> MembershipsResponse:
+    return MembershipsResponse(
+        memberships=[
+            MembershipResponse.from_domain(m) for m in await service.contacts(identity.user.id)
+        ]
+    )
+
+
+@router.get("/alerts", response_model=AlertsResponse)
+async def global_alerts(service: Service, identity: CurrentIdentityDependency) -> AlertsResponse:
+    return AlertsResponse(
+        alerts=[
+            AlertResponse(
+                channel=ChannelResponse.from_view(c),
+                message=MessageResponse.from_domain(m),
+                unread_count=n,
+            )
+            for c, m, n in await service.global_alerts(identity.user.id)
+        ]
+    )
+
+
+class UnreadCountsResponse(BaseModel):
+    total: int
+    direct_messages: int
+    workspaces: dict[str, int]
+    channels: dict[str, int]
+
+
+@router.get("/unread-counts", response_model=UnreadCountsResponse)
+async def unread_counts(
+    service: Service, identity: CurrentIdentityDependency
+) -> UnreadCountsResponse:
+    items = await service.unread_counts(identity.user.id)
+    workspaces: dict[str, int] = {}
+    channels: dict[str, int] = {}
+    direct = 0
+    for channel_id, workspace_id, is_direct, n in items:
+        channels[str(channel_id)] = n
+        if is_direct:
+            direct += n
+        else:
+            key = str(workspace_id)
+            workspaces[key] = workspaces.get(key, 0) + n
+    return UnreadCountsResponse(
+        total=sum(channels.values()),
+        direct_messages=direct,
+        workspaces=workspaces,
+        channels=channels,
+    )
 
 
 @router.get("/workspaces/{workspace_id}/alerts", response_model=AlertsResponse)

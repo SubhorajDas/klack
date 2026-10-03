@@ -18,6 +18,14 @@ export type Channel = {
   archived_at: string | null;
 };
 export type Attachment = { id: string; filename: string; size: number; content_type: string };
+export type MessageQuote = {
+  id: string;
+  author_user_id: string;
+  body: string | null;
+  deleted_at: string | null;
+  revision: number;
+  attachment_count: number;
+};
 export type Message = {
   id: string;
   workspace_id: string;
@@ -29,9 +37,9 @@ export type Message = {
   deleted_at: string | null;
   client_message_id: string | null;
   revision: number;
-  parent_message_id?: string | null;
+  reply_to_message_id?: string | null;
   reactions?: [string, string][];
-  reply_count?: number;
+  quote?: MessageQuote | null;
   attachments?: Attachment[];
 };
 export type MessagePage = { messages: Message[]; next_before: string | null };

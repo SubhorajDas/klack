@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mergeMessages } from './messages';
+import { mergeMessages, quoteMessage } from './messages';
 import type { Message } from './types';
 const base: Message = {
   id: 'one',
@@ -26,5 +26,27 @@ describe('revision reconciliation', () => {
   it('deduplicates a REST response and its socket echo and orders history', () => {
     const older = { ...base, id: 'older', created_at: '2026-09-23T09:00:00Z' };
     expect(mergeMessages([base], [base, older])).toEqual([older, base]);
+  });
+  it('refreshes quotes on edits and erases deleted originals despite stale reply snapshots', () => {
+    const reply = { ...base, id: 'reply', reply_to_message_id: base.id, quote: quoteMessage(base) };
+    const edited = { ...base, body: 'changed original', revision: 2 };
+    const updated = mergeMessages([reply], [edited]).find((m) => m.id === 'reply')!;
+    expect(updated.quote?.body).toBe('changed original');
+    const deleted = { ...edited, body: null, deleted_at: '2026-09-24T10:00:00Z', revision: 3 };
+    const result = mergeMessages([updated], [deleted]);
+    expect(mergeMessages(result, [reply]).find((m) => m.id === 'reply')?.quote).toEqual(
+      quoteMessage(deleted),
+    );
+  });
+  it('accepts a refreshed server quote even when the reply revision has not changed', () => {
+    const reply = {
+      ...base,
+      id: 'reply',
+      reply_to_message_id: 'original',
+      quote: quoteMessage({ ...base, id: 'original' }),
+    };
+    const fresh = { ...reply, quote: { ...reply.quote, body: 'edited elsewhere', revision: 4 } };
+    expect(mergeMessages([reply], [fresh])[0].quote?.body).toBe('edited elsewhere');
+    expect(mergeMessages([fresh], [reply])[0].quote?.revision).toBe(4);
   });
 });

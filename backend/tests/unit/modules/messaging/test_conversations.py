@@ -17,7 +17,64 @@ from klack.modules.identity.api.dependencies import (
     get_current_mutating_identity,
 )
 from klack.modules.identity.infrastructure.models import UserRecord
-from klack.modules.workspaces.infrastructure.models import MembershipRecord
+from klack.modules.workspaces.infrastructure.models import MembershipRecord, WorkspaceRecord
+
+
+async def test_global_dm_identity_counts_and_departure(conversation_api, session: AsyncSession):
+    client, actor = conversation_api
+    other = uuid4()
+    session.add(
+        WorkspaceRecord(
+            id=other,
+            name="Other workspace",
+            created_by_user_id=AUTHOR_ID,
+            created_at=NOW,
+            updated_at=NOW,
+        )
+    )
+    await session.flush()
+    for user_id in [AUTHOR_ID, PEER]:
+        session.add(
+            MembershipRecord(
+                workspace_id=other,
+                user_id=user_id,
+                role="owner" if user_id == AUTHOR_ID else "member",
+                joined_at=NOW,
+            )
+        )
+    await session.commit()
+    opened = await client.post(f"{BASE}/direct-messages", json={"user_id": str(PEER)})
+    assert opened.status_code == 200
+    dm = opened.json()
+    reverse_workspace = await client.post(
+        f"/api/v1/workspaces/{other}/direct-messages", json={"user_id": str(PEER)}
+    )
+    assert reverse_workspace.json()["id"] == dm["id"]
+    assert (await client.post("/api/v1/direct-messages", json={"user_id": str(PEER)})).json()[
+        "id"
+    ] == dm["id"]
+    path = f"{BASE}/channels/{dm['id']}"
+    await client.post(MESSAGES, json={"body": "Channel update"})
+    direct = (await client.post(f"{path}/messages", json={"body": "Personal update"})).json()
+    actor.user.id = PEER
+    counts = (await client.get("/api/v1/unread-counts")).json()
+    assert counts["direct_messages"] == 1
+    assert counts["channels"][dm["id"]] == 1
+    assert (await client.get("/api/v1/direct-messages")).json()["channels"][0]["id"] == dm["id"]
+    assert (await client.get("/api/v1/contacts")).status_code == 200
+    await session.execute(delete(MembershipRecord).where(MembershipRecord.user_id == PEER))
+    await session.commit()
+    assert (await client.get(f"{path}/messages")).status_code == 200
+    assert len((await client.get("/api/v1/alerts")).json()["alerts"]) == 1
+    assert (await client.post("/api/v1/direct-messages", json={"user_id": str(AUTHOR_ID)})).json()[
+        "id"
+    ] == dm["id"]
+    await client.put(f"{path}/read-cursor", json={"message_id": direct["id"]})
+    assert (await client.get("/api/v1/unread-counts")).json()["total"] == 0
+    actor.user.id = ADMIN
+    assert (await client.get("/api/v1/direct-messages")).json() == {"channels": []}
+    assert (await client.get(f"/api/v1/direct-messages/{dm['id']}")).status_code == 404
+
 
 PEER = UUID(int=2)
 ADMIN = UUID(int=3)
@@ -57,32 +114,33 @@ BASE = f"/api/v1/workspaces/{WORKSPACE_ID}"
 MESSAGES = f"{BASE}/channels/{CHANNEL_ID}/messages"
 
 
-async def test_threads_reactions_and_monotonic_reads(conversation_api):
+async def test_quoted_replies_reactions_and_monotonic_reads(conversation_api):
     client, _actor = conversation_api
     first = (await client.post(MESSAGES, json={"body": "Root"})).json()
     root = first["id"]
     retry = str(uuid4())
-    reply_payload = {"body": "Reply", "parent_message_id": root, "client_message_id": retry}
+    reply_payload = {"body": "Reply", "reply_to_message_id": root, "client_message_id": retry}
     reply = await client.post(MESSAGES, json=reply_payload)
     assert reply.status_code == 201
     reply_id = reply.json()["id"]
     assert (await client.post(MESSAGES, json=reply_payload)).json()["id"] == reply_id
     assert (
-        await client.post(MESSAGES, json={**reply_payload, "parent_message_id": None})
+        await client.post(MESSAGES, json={**reply_payload, "reply_to_message_id": None})
     ).status_code == 409
-    roots = (await client.get(MESSAGES)).json()["messages"]
-    assert len(roots) == 1 and roots[0]["reply_count"] == 1 and roots[0]["revision"] == 2
-    thread = (await client.get(MESSAGES, params={"parent_message_id": root})).json()
-    assert [m["id"] for m in thread["messages"]] == [reply_id]
-    assert (await client.get(MESSAGES, params={"before": reply_id})).status_code == 422
-    assert (
-        await client.post(MESSAGES, json={"body": "Nested", "parent_message_id": reply_id})
-    ).status_code == 404
-    assert (await client.get(MESSAGES, params={"parent_message_id": reply_id})).status_code == 404
+    timeline = (await client.get(MESSAGES)).json()["messages"]
+    assert [m["id"] for m in timeline] == [reply_id, root]
+    assert timeline[0]["quote"]["id"] == root
+    assert timeline[0]["quote"]["body"] == "Root"
+    assert timeline[1]["revision"] == 1
+    assert (await client.get(MESSAGES, params={"before": reply_id})).status_code == 200
+    nested = await client.post(MESSAGES, json={"body": "Nested", "reply_to_message_id": reply_id})
+    assert nested.status_code == 201
+    assert nested.json()["quote"]["body"] == "Reply"
+    assert (await client.get(MESSAGES, params={"around": reply_id})).status_code == 200
     assert (
         await client.post(
             f"{BASE}/channels/{OTHER_CHANNEL_ID}/messages",
-            json={"body": "Cross", "parent_message_id": root},
+            json={"body": "Cross", "reply_to_message_id": root},
         )
     ).status_code == 404
     reaction = f"{MESSAGES}/{root}/reactions/👍"
@@ -101,11 +159,12 @@ async def test_threads_reactions_and_monotonic_reads(conversation_api):
     assert (await client.put(read, json={"message_id": str(uuid4())})).status_code == 404
     assert (await client.delete(f"{MESSAGES}/{root}")).status_code == 204
     assert (await client.put(reaction)).status_code == 409
-    assert (await client.get(MESSAGES, params={"parent_message_id": root})).json()["messages"][0][
-        "id"
-    ] == reply_id
+    timeline = (await client.get(MESSAGES)).json()["messages"]
+    quoted = next(m for m in timeline if m["id"] == reply_id)
+    assert quoted["quote"]["body"] is None
+    assert quoted["quote"]["deleted_at"] is not None
     assert (
-        await client.post(MESSAGES, json={"body": "After deletion", "parent_message_id": root})
+        await client.post(MESSAGES, json={"body": "After deletion", "reply_to_message_id": root})
     ).status_code == 201
 
 
@@ -156,33 +215,81 @@ async def test_direct_privacy_and_unread(conversation_api, session: AsyncSession
     )
     await session.commit()
     actor.user.id = PEER
-    assert (await client.get(f"{path}/messages")).status_code == 404
+    assert (await client.get(f"{path}/messages")).status_code == 200
+    assert len((await client.get("/api/v1/direct-messages")).json()["channels"]) == 1
 
 
-async def test_thread_pagination_and_archival(conversation_api):
+async def test_reply_pagination_and_archival(conversation_api):
     client, _actor = conversation_api
     root = (await client.post(MESSAGES, json={"body": "Root"})).json()["id"]
     ids = [
-        (await client.post(MESSAGES, json={"body": str(i), "parent_message_id": root})).json()["id"]
+        (await client.post(MESSAGES, json={"body": str(i), "reply_to_message_id": root})).json()[
+            "id"
+        ]
         for i in range(3)
     ]
-    first = (await client.get(MESSAGES, params={"parent_message_id": root, "limit": 2})).json()
+    first = (await client.get(MESSAGES, params={"limit": 2})).json()
     assert [m["id"] for m in first["messages"]] == list(reversed(ids[1:]))
     second = (
-        await client.get(
-            MESSAGES, params={"parent_message_id": root, "limit": 2, "before": first["next_before"]}
-        )
+        await client.get(MESSAGES, params={"limit": 2, "before": first["next_before"]})
     ).json()
-    assert second["messages"][0]["id"] == ids[0] and second["next_before"] is None
+    assert [m["id"] for m in second["messages"]] == [ids[0], root]
+    assert second["next_before"] is None
     assert (await client.post(f"{BASE}/channels/{CHANNEL_ID}/archive")).status_code == 200
     assert (await client.put(f"{MESSAGES}/{root}/reactions/👍")).status_code == 409
     assert (
-        await client.post(MESSAGES, json={"body": "closed", "parent_message_id": root})
+        await client.post(MESSAGES, json={"body": "closed", "reply_to_message_id": root})
     ).status_code == 409
-    assert (await client.get(MESSAGES, params={"parent_message_id": root})).status_code == 200
+    assert (await client.get(MESSAGES, params={"around": root})).status_code == 200
 
 
-async def test_alerts_include_threads_and_enforce_membership(
+async def test_quotes_follow_edits_and_deletions_outside_the_history_page(conversation_api):
+    client, _actor = conversation_api
+    original = (await client.post(MESSAGES, json={"body": "Original " * 60})).json()
+    reply = (
+        await client.post(
+            MESSAGES,
+            json={
+                "body": "Quoted reply",
+                "reply_to_message_id": original["id"],
+            },
+        )
+    ).json()
+    assert len(reply["quote"]["body"]) == 240
+    await client.patch(f"{MESSAGES}/{original['id']}", json={"body": "Edited original"})
+    page = (await client.get(MESSAGES, params={"limit": 1})).json()
+    assert len(page["messages"]) == 1
+    assert page["messages"][0]["quote"]["body"] == "Edited original"
+    await client.delete(f"{MESSAGES}/{original['id']}")
+    page = (await client.get(MESSAGES, params={"limit": 1})).json()
+    assert page["messages"][0]["quote"]["body"] is None
+    assert page["messages"][0]["quote"]["attachment_count"] == 0
+    assert page["messages"][0]["quote"]["deleted_at"] is not None
+    await client.delete(f"{MESSAGES}/{reply['id']}")
+    page = (await client.get(MESSAGES, params={"limit": 1})).json()
+    assert page["messages"][0]["quote"] is None
+
+
+async def test_quote_context_validates_channel_access_and_cursors(conversation_api):
+    client, _actor = conversation_api
+    root = (await client.post(MESSAGES, json={"body": "Original"})).json()["id"]
+    ids = [
+        (await client.post(MESSAGES, json={"body": f"Message {i}"})).json()["id"] for i in range(8)
+    ]
+    page = (await client.get(MESSAGES, params={"around": ids[3], "limit": 4})).json()
+    assert [m["id"] for m in page["messages"]] == list(reversed(ids[1:6]))
+    assert (
+        await client.get(MESSAGES, params={"around": ids[3], "before": root})
+    ).status_code == 422
+    assert (await client.get(MESSAGES, params={"around": str(uuid4())})).status_code == 404
+    other = f"{BASE}/channels/{OTHER_CHANNEL_ID}/messages"
+    assert (await client.get(other, params={"around": root})).status_code == 404
+    assert (
+        await client.post(MESSAGES, json={"body": "Invalid", "reply_to_message_id": str(uuid4())})
+    ).status_code == 404
+
+
+async def test_alerts_include_replies_and_enforce_membership(
     conversation_api, session: AsyncSession
 ):
     client, actor = conversation_api
@@ -191,7 +298,7 @@ async def test_alerts_include_threads_and_enforce_membership(
     root = (await client.post(f"{path}/messages", json={"body": "Hello"})).json()
     reply = (
         await client.post(
-            f"{path}/messages", json={"body": "Thread update", "parent_message_id": root["id"]}
+            f"{path}/messages", json={"body": "Quoted update", "reply_to_message_id": root["id"]}
         )
     ).json()
     deleted = (await client.post(f"{path}/messages", json={"body": "Removed"})).json()
@@ -207,7 +314,7 @@ async def test_alerts_include_threads_and_enforce_membership(
     assert alerts[0]["channel"]["id"] == dm["id"]
     assert alerts[0]["unread_count"] == 2
     assert alerts[0]["message"]["id"] == reply["id"]
-    assert alerts[0]["message"]["parent_message_id"] == root["id"]
+    assert alerts[0]["message"]["reply_to_message_id"] == root["id"]
     await client.put(f"{path}/read-cursor", json={"message_id": root["id"]})
     assert (await client.get(f"{BASE}/alerts")).json()["alerts"][0]["unread_count"] == 1
     await client.put(f"{path}/read-cursor", json={"message_id": reply["id"]})

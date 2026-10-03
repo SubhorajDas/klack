@@ -4,29 +4,26 @@ import { MessageCircle, Plus, Search, Lock } from 'lucide-react';
 import { useMemberName } from '@/lib/member-names';
 import { api, ApiError, errorMessage } from '@/lib/api';
 import { useCachedApiData } from '@/lib/use-cached-data';
-import { workspacePath, type Channel, type Membership, type User } from '@/lib/types';
+import { type Channel, type Membership, type User } from '@/lib/types';
+import { useUnreadCounts, UnreadBadge } from '@/lib/unread-counts';
 import { Conversation } from './conversation';
 import { Alert, Avatar, Empty, Loading, Modal } from './ui';
 
 export function DirectMessages({
-  workspace,
   user,
   selectedId,
   select,
   filter,
 }: {
-  workspace: string;
   user: User;
   selectedId?: string;
   select: (id?: string) => void;
   filter: string;
 }) {
   const memberName = useMemberName();
-  const path = `${workspacePath(workspace)}/direct-messages`;
+  const path = '/direct-messages';
   const cachedDms = useCachedApiData<{ channels: Channel[] }>(path);
-  const cachedMembers = useCachedApiData<{ memberships: Membership[] }>(
-    `${workspacePath(workspace)}/memberships`,
-  );
+  const cachedMembers = useCachedApiData<{ memberships: Membership[] }>('/contacts');
   const [channelList, setChannels] = useState<Channel[]>(cachedDms?.channels ?? []);
   const [memberList, setMembers] = useState<Membership[]>(cachedMembers?.memberships ?? []);
   const channels = cachedDms?.channels ?? channelList;
@@ -49,7 +46,7 @@ export function DirectMessages({
     setLoading(true);
     Promise.all([
       api<{ channels: Channel[] }>(path),
-      api<{ memberships: Membership[] }>(`${workspacePath(workspace)}/memberships`),
+      api<{ memberships: Membership[] }>('/contacts'),
     ])
       .then(([dms, people]) => {
         if (!stopped) {
@@ -91,7 +88,23 @@ export function DirectMessages({
       clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [workspace, path, attempt]);
+  }, [path, attempt]);
+  useEffect(() => {
+    if (!selectedId || loading || channels.some((c) => c.id === selectedId)) return;
+    let stopped = false;
+    api<Channel>(`/direct-messages/${selectedId}`)
+      .then((channel) => {
+        if (stopped) return;
+        setChannels((current) => [channel, ...current.filter((c) => c.id !== channel.id)]);
+        if (channel.id !== selectedId) select(channel.id);
+      })
+      .catch(() => {
+        /* Unavailable conversations keep the normal empty state. */
+      });
+    return () => {
+      stopped = true;
+    };
+  }, [selectedId, loading, channels, select]);
   const selected = channels.find((c) => c.id === selectedId);
   const visible = channels.filter((c) =>
     named(c)
@@ -141,7 +154,7 @@ export function DirectMessages({
                   <strong>{named(c).name}</strong>
                   <small>Private conversation</small>
                 </span>
-                <Unread workspace={workspace} channel={c.id} />
+                <Unread channel={c.id} />
               </button>
             ))}
             {!visible.length && (
@@ -191,7 +204,7 @@ export function DirectMessages({
             }
           >
             {selectedId
-              ? 'This conversation could not be found in your workspace.'
+              ? 'This conversation could not be found.'
               : 'Choose a teammate to share an idea, ask a question, or catch up privately.'}
           </Empty>
         )}
@@ -218,7 +231,9 @@ export function DirectMessages({
             }}
           >
             <Alert>{error}</Alert>
-            <p className="muted">Start a private conversation with someone in your workspace.</p>
+            <p className="muted">
+              Start a private conversation with a teammate from any of your workspaces.
+            </p>
             <label>
               Start a conversation
               <select name="user" required defaultValue="">
@@ -250,46 +265,7 @@ export function DirectMessages({
   );
 }
 
-export function Unread({ workspace, channel }: { workspace: string; channel: string }) {
-  const [count, setCount] = useState(0);
-  useEffect(() => {
-    let stopped = false;
-    let debounce: ReturnType<typeof setTimeout>;
-    let sequence = 0;
-    const refresh = () => {
-      if (document.visibilityState !== 'visible') return;
-      const current = ++sequence;
-      api<{ unread_count: number }>(`${workspacePath(workspace)}/channels/${channel}/read-cursor`)
-        .then((r) => {
-          if (!stopped && current === sequence) setCount(r.unread_count);
-        })
-        .catch(() => {
-          /* A failed refresh must not falsely clear an unread badge. */
-        });
-    };
-    const changed = (event: Event) => {
-      const detail = (event as CustomEvent<{ channel?: string }>).detail;
-      if (detail?.channel && detail.channel !== channel) return;
-      clearTimeout(debounce);
-      debounce = setTimeout(refresh, 100);
-    };
-    refresh();
-    const timer = setInterval(refresh, 15000);
-    window.addEventListener('klack:read', changed);
-    window.addEventListener('klack:messages-changed', changed);
-    document.addEventListener('visibilitychange', refresh);
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-      clearTimeout(debounce);
-      window.removeEventListener('klack:read', changed);
-      window.removeEventListener('klack:messages-changed', changed);
-      document.removeEventListener('visibilitychange', refresh);
-    };
-  }, [workspace, channel]);
-  return count > 0 ? (
-    <span className="badge purple" aria-label={`${count} unread messages`}>
-      {count > 99 ? '99+' : count}
-    </span>
-  ) : null;
+export function Unread({ channel }: { workspace?: string; channel: string }) {
+  const counts = useUnreadCounts();
+  return <UnreadBadge count={counts.channels[channel] || 0} />;
 }

@@ -95,10 +95,29 @@ reset();
 const membership = { user_id: uid, workspace_id: wid, role: 'owner', joined_at: user.created_at };
 let uploads = new Map();
 const wss = new WebSocketServer({ noServer: true });
+function withQuote(message) {
+  const target = messages.find(
+    (m) => m.id === message.reply_to_message_id && m.channel_id === message.channel_id,
+  );
+  return {
+    ...message,
+    quote:
+      target && !message.deleted_at
+        ? {
+            id: target.id,
+            author_user_id: target.author_user_id,
+            body: target.deleted_at ? null : (target.body || '').slice(0, 240),
+            deleted_at: target.deleted_at,
+            revision: target.revision,
+            attachment_count: target.deleted_at ? 0 : target.attachments?.length || 0,
+          }
+        : null,
+  };
+}
 function broadcast(message) {
   for (const client of wss.clients)
     if (client.readyState === 1 && client.channel === message.channel_id)
-      client.send(JSON.stringify({ type: 'message.changed', message }));
+      client.send(JSON.stringify({ type: 'message.changed', message: withQuote(message) }));
 }
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, 'http://127.0.0.1:8100');
@@ -125,16 +144,15 @@ const server = createServer(async (req, res) => {
   if (path === '/__mode') {
     mode = body.mode;
     if (mode === 'no-workspace') hasWorkspace = false;
-    if (mode === 'paged-thread') {
+    if (mode === 'paged-replies') {
       for (let index = 0; index < 55; index++)
         messages.push({
           ...messages[0],
           id: `reply-${index}`,
-          parent_message_id: 'm1',
-          body: `Thread history ${index}`,
+          reply_to_message_id: 'm1',
+          body: `Reply history ${index}`,
           created_at: new Date(Date.parse('2026-09-24T10:00:00Z') + index * 1000).toISOString(),
         });
-      messages[0].reply_count = 55;
     }
     return json({ ok: true });
   }
@@ -232,7 +250,7 @@ const server = createServer(async (req, res) => {
     }
     return json({ ...membership, role: mode.startsWith('leave-') ? 'member' : membership.role });
   }
-  if (path.endsWith('/memberships'))
+  if (path.endsWith('/memberships') || path.endsWith('/contacts'))
     return json({
       memberships: [
         membership,
@@ -294,6 +312,27 @@ const server = createServer(async (req, res) => {
         .sort((a, b) => b.message.created_at.localeCompare(a.message.created_at)),
     });
   }
+  if (path.endsWith('/unread-counts')) {
+    const counts = { total: 0, direct_messages: 0, workspaces: {}, channels: {} };
+    for (const channel of channels.filter((c) => c.is_member)) {
+      const cursor = cursors.get(channel.id);
+      const count = messages.filter(
+        (m) =>
+          m.channel_id === channel.id &&
+          m.author_user_id !== uid &&
+          !m.deleted_at &&
+          (!cursor || m.created_at > cursor.created_at),
+      ).length;
+      if (!count) continue;
+      counts.channels[channel.id] = count;
+      counts.total += count;
+      if (channel.direct_key) counts.direct_messages += count;
+      else
+        counts.workspaces[channel.workspace_id] =
+          (counts.workspaces[channel.workspace_id] || 0) + count;
+    }
+    return json(counts);
+  }
   if (path.endsWith('/read-cursor')) {
     const channel = path.split('/').at(-2);
     if (body.message_id) {
@@ -324,7 +363,7 @@ const server = createServer(async (req, res) => {
     if (req.method === 'PUT') message.reactions.push([emoji, uid]);
     message.revision++;
     broadcast(message);
-    return json(message);
+    return json(withQuote(message));
   }
   if (path.endsWith('/files/limits'))
     return json({ enabled: true, max_bytes: 26214400, max_attachments: 5 });
@@ -385,13 +424,15 @@ const server = createServer(async (req, res) => {
     const channel = path.split('/').at(-2);
     if (req.method === 'GET') {
       let snapshot = messages
-        .filter(
-          (item) =>
-            item.channel_id === channel &&
-            (item.parent_message_id || null) === url.searchParams.get('parent_message_id'),
-        )
-        .map((item) => ({ ...item }))
+        .filter((item) => item.channel_id === channel)
+        .map(withQuote)
         .reverse();
+      const around = url.searchParams.get('around');
+      if (around) {
+        const index = snapshot.findIndex((m) => m.id === around);
+        if (index < 0) return json({ detail: 'Not found' }, 404);
+        snapshot = snapshot.slice(Math.max(0, index - 25), index + 26);
+      }
       if (mode === 'race') await new Promise((resolve) => setTimeout(resolve, 200));
       const before = url.searchParams.get('before');
       if (before) snapshot = snapshot.slice(snapshot.findIndex((m) => m.id === before) + 1);
@@ -412,26 +453,20 @@ const server = createServer(async (req, res) => {
           return file;
         }),
         client_message_id: body.client_message_id,
-        parent_message_id: body.parent_message_id || null,
+        reply_to_message_id: body.reply_to_message_id || null,
         revision: 1,
         edited_at: null,
         deleted_at: null,
         created_at: new Date().toISOString(),
       };
       messages.push(message);
-      if (message.parent_message_id) {
-        const root = messages.find((m) => m.id === message.parent_message_id);
-        root.reply_count = (root.reply_count || 0) + 1;
-        root.revision++;
-        broadcast(root);
-      }
     }
     broadcast(message);
     if (mode === 'fail-once') {
       mode = '';
       return json({ detail: 'Response lost. Please retry.' }, 503);
     }
-    return json(message, 201);
+    return json(withQuote(message), 201);
   }
   if (path.includes('/messages/')) {
     const message = messages.find((item) => item.id === path.split('/').at(-1));
@@ -446,7 +481,7 @@ const server = createServer(async (req, res) => {
     message.body = body.body;
     message.edited_at = new Date().toISOString();
     broadcast(message);
-    return json(message);
+    return json(withQuote(message));
   }
   return json({ detail: 'Fixture route not found' }, 404);
 });

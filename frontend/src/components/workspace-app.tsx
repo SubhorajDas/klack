@@ -5,7 +5,6 @@ import {
   Home,
   MessageCircle,
   Bell,
-  Bookmark,
   Search,
   Hash,
   Plus,
@@ -17,8 +16,6 @@ import {
   X,
   Lock,
   ArrowUpRight,
-  Sparkles,
-  LogOut,
   ArrowRight,
   LayoutGrid,
 } from 'lucide-react';
@@ -37,24 +34,42 @@ import { DirectMessages, Unread } from './direct-messages';
 import { Conversation } from './conversation';
 import { People, Account } from './management';
 import { Alerts } from './alerts';
+import { UnreadCountsProvider, UnreadBadge, useUnreadCounts } from '@/lib/unread-counts';
 
-type View = 'home' | 'channels' | 'people' | 'settings' | 'dms' | 'activity' | 'saved' | 'channel';
+type View = 'home' | 'channels' | 'people' | 'settings' | 'dms' | 'activity' | 'channel';
 type Dialog =
-  'workspace' | 'create-workspace' | 'create-channel' | 'join' | 'help' | 'leave-workspace' | null;
-export function WorkspaceApp({
-  user,
-  setUser,
-}: {
-  user: User;
-  setUser: (user: User | null) => void;
-}) {
+  | 'add-workspace'
+  | 'create-workspace'
+  | 'create-channel'
+  | 'join'
+  | 'help'
+  | 'leave-workspace'
+  | null;
+export function WorkspaceApp(props: { user: User; setUser: (user: User | null) => void }) {
+  return (
+    <UnreadCountsProvider key={props.user.id}>
+      <WorkspaceShell {...props} />
+    </UnreadCountsProvider>
+  );
+}
+
+function WorkspaceShell({ user, setUser }: { user: User; setUser: (user: User | null) => void }) {
+  const unread = useUnreadCounts();
   const router = useRouter();
   const pathname = usePathname();
   const parts = pathname.split('/');
   const routeWorkspace = parts[1] === 'w' ? parts[2] : undefined;
   const routeChannel = parts[3] === 'channel' ? parts[4] : undefined;
-  const routeDirect = parts[3] === 'dms' ? parts[4] : undefined;
-  const routeView = (pathname === '/settings' ? 'settings' : parts[3]) as View | undefined;
+  const routeDirect = parts[1] === 'dms' ? parts[2] : parts[3] === 'dms' ? parts[4] : undefined;
+  const routeView = (
+    parts[1] === 'dms'
+      ? 'dms'
+      : pathname === '/activity'
+        ? 'activity'
+        : pathname === '/settings'
+          ? 'settings'
+          : parts[3]
+  ) as View | undefined;
   const cachedWorkspaces = useCachedApiData<{ workspaces: Workspace[] }>('/workspaces');
   const [workspaceList, setWorkspaces] = useState<Workspace[]>([]);
   const workspaces = cachedWorkspaces?.workspaces ?? workspaceList;
@@ -157,19 +172,25 @@ export function WorkspaceApp({
     setView(
       routeChannel
         ? 'channel'
-        : ['home', 'channels', 'people', 'settings', 'dms', 'activity', 'saved'].includes(
-              routeView || '',
-            )
+        : ['home', 'channels', 'people', 'settings', 'dms', 'activity'].includes(routeView || '')
           ? routeView!
           : 'home',
     );
     setChannelId(routeChannel || '');
     if (pathname === '/join') setDialog('join');
+    if (routeWorkspace && (routeView === 'dms' || routeView === 'activity'))
+      router.replace(
+        routeView === 'dms' ? `/dms${routeDirect ? `/${routeDirect}` : ''}` : '/activity',
+      );
   }, [pathname, routeChannel, routeView]);
 
   function navigate(next: View, id?: string) {
     setMobile(false);
     setFilter('');
+    if (next === 'dms' || next === 'activity') {
+      router.push(next === 'dms' ? `/dms${id ? `/${id}` : ''}` : '/activity');
+      return;
+    }
     if (next === 'settings') {
       router.push('/settings');
       return;
@@ -182,6 +203,8 @@ export function WorkspaceApp({
   }
   function switchWorkspace(id: string) {
     setWorkspaceId(id);
+    setMobile(false);
+    setFilter('');
     setDialog(null);
     router.push(`/w/${id}/home`);
   }
@@ -219,8 +242,6 @@ export function WorkspaceApp({
   const navItems = [
     { key: 'home', label: 'Home', icon: Home },
     { key: 'dms', label: 'Direct messages', icon: MessageCircle },
-    { key: 'activity', label: 'Alerts', icon: Bell },
-    { key: 'saved', label: 'Saved', icon: Bookmark },
   ] as const;
   if (loading && !cachedWorkspaces && !workspaceList.length)
     return (
@@ -230,7 +251,7 @@ export function WorkspaceApp({
       </main>
     );
   return (
-    <MemberNamesProvider key={workspaceId} workspace={workspaceId}>
+    <MemberNamesProvider key={user.id}>
       <div className="app-shell">
         {mobile && (
           <button
@@ -240,113 +261,110 @@ export function WorkspaceApp({
           />
         )}
         <aside className={`sidebar ${mobile ? 'mobile-open' : ''}`}>
-          <button className="workspace-switch" onClick={() => setDialog('workspace')}>
-            <span className="logo">{workspace?.name[0]?.toUpperCase() || 'K'}</span>
-            <strong>{workspace?.name || 'Your workspaces'}</strong>
-            <ChevronDown size={17} />
-          </button>
-          <nav aria-label="Main navigation">
-            {navItems
-              .filter((item) => workspace || item.key === 'home')
-              .map((item) => (
+          <nav className="navigation-rail" aria-label="Main navigation">
+            {navItems.map((item) => (
+              <button
+                key={item.key}
+                className={`rail-button ${view === item.key ? 'active' : ''}`}
+                aria-label={item.label}
+                title={item.label}
+                aria-current={view === item.key ? 'page' : undefined}
+                onClick={() => navigate(item.key)}
+              >
+                <item.icon size={22} />
+                {item.key === 'dms' && <UnreadBadge count={unread.direct_messages} />}
+              </button>
+            ))}
+            <div className="rail-divider" />
+            <div className="workspace-rail-list" role="group" aria-label="Workspaces">
+              {workspaces.map((item) => (
                 <button
-                  key={item.key}
-                  className={`nav-item ${view === item.key ? 'active' : ''}`}
-                  onClick={() => navigate(item.key)}
+                  key={item.id}
+                  className={`rail-button workspace-rail-button ${item.id === workspaceId ? 'active' : ''}`}
+                  aria-label={item.name}
+                  aria-pressed={item.id === workspaceId}
+                  title={item.name}
+                  onClick={() => switchWorkspace(item.id)}
                 >
-                  <item.icon size={20} />
-                  {item.label}
-                  {item.key === 'saved' && <span className="nav-soon">Soon</span>}
+                  {item.name[0]?.toUpperCase()}
+                  <UnreadBadge count={unread.workspaces[item.id] || 0} />
                 </button>
               ))}
-            {workspace && (
-              <button
-                className={`nav-item ${view === 'channels' ? 'active' : ''}`}
-                onClick={() => navigate('channels')}
-              >
-                <LayoutGrid size={20} />
-                Browse channels
-              </button>
-            )}
+            </div>
+            <button
+              className="rail-button rail-add"
+              aria-label="Add workspace"
+              title="Add workspace"
+              onClick={() => setDialog('add-workspace')}
+            >
+              <Plus size={22} />
+            </button>
           </nav>
-          {workspace && (
-            <>
-              <div className="sidebar-section">
-                <span>
-                  <ChevronDown size={14} />
-                  Channels
-                </span>
-                {manager && (
-                  <button
-                    className="icon-button"
-                    aria-label="Create channel"
-                    onClick={() => setDialog('create-channel')}
-                  >
-                    <Plus size={17} />
-                  </button>
-                )}
-              </div>
-              <div className="channel-list">
-                {channels
-                  .filter((item) => item.is_member && !item.archived_at)
-                  .map((item) => (
-                    <button
-                      key={item.id}
-                      className={`nav-item channel-link ${view === 'channel' && item.id === channelId ? 'active' : ''}`}
-                      onClick={() => navigate('channel', item.id)}
-                    >
-                      {item.visibility === 'private' ? <Lock size={17} /> : <Hash size={19} />}
-                      <span>{item.name}</span>
-                      <Unread workspace={workspaceId} channel={item.id} />
-                    </button>
-                  ))}
-                {!channels.some((item) => item.is_member) && (
-                  <p className="sidebar-hint">Your conversations will feel at home here.</p>
-                )}
+          <div className="sidebar-panel">
+            <div className="workspace-heading">
+              <strong>{workspace?.name || 'Your workspaces'}</strong>
+            </div>
+            {workspace && (
+              <>
                 <button
-                  className="nav-item channel-link subtle"
+                  className={`nav-item browse-channels ${view === 'channels' ? 'active' : ''}`}
                   onClick={() => navigate('channels')}
                 >
-                  <Plus size={19} />
-                  Add channels
+                  <LayoutGrid size={18} />
+                  Browse channels
                 </button>
-              </div>
-              <div className="sidebar-section">
-                <span>WORKSPACE</span>
-              </div>
-              <button
-                className={`nav-item ${view === 'people' ? 'active' : ''}`}
-                onClick={() => navigate('people')}
-              >
-                <Users size={19} />
-                People
+                <div className="sidebar-section">
+                  <span>
+                    <ChevronDown size={14} />
+                    Channels
+                  </span>
+                  {manager && (
+                    <button
+                      className="icon-button"
+                      aria-label="Create channel"
+                      onClick={() => setDialog('create-channel')}
+                    >
+                      <Plus size={17} />
+                    </button>
+                  )}
+                </div>
+                <div className="channel-list">
+                  {channels
+                    .filter((item) => item.is_member && !item.archived_at)
+                    .map((item) => (
+                      <button
+                        key={item.id}
+                        className={`nav-item channel-link ${view === 'channel' && item.id === channelId ? 'active' : ''}`}
+                        onClick={() => navigate('channel', item.id)}
+                      >
+                        {item.visibility === 'private' ? <Lock size={17} /> : <Hash size={19} />}
+                        <span>{item.name}</span>
+                        <Unread workspace={workspaceId} channel={item.id} />
+                      </button>
+                    ))}
+                  {!channels.some((item) => item.is_member) && (
+                    <p className="sidebar-hint">Your conversations will feel at home here.</p>
+                  )}
+                  <button
+                    className="nav-item channel-link subtle"
+                    onClick={() => navigate('channels')}
+                  >
+                    <Plus size={19} />
+                    Add channels
+                  </button>
+                </div>
+              </>
+            )}
+            <div className="sidebar-bottom">
+              <button className="user-menu" onClick={() => navigate('settings')}>
+                <Avatar name={user.email} small />
+                <span>
+                  <strong>{user.email.split('@')[0]}</strong>
+                  <small>My account</small>
+                </span>
+                <Settings size={17} />
               </button>
-              <button
-                className={`nav-item ${view === 'settings' ? 'active' : ''}`}
-                onClick={() => navigate('settings')}
-              >
-                <Settings size={19} />
-                Settings
-              </button>
-            </>
-          )}
-          <div className="sidebar-bottom">
-            <div className="workspace-note">
-              <Sparkles size={18} />
-              <p>
-                A space for good ideas.
-                <br />
-                <span>And even better teamwork.</span>
-              </p>
             </div>
-            <button className="user-menu" onClick={() => navigate('settings')}>
-              <Avatar name={user.email} small />
-              <span>
-                <strong>{user.email.split('@')[0]}</strong>
-                <small>My account</small>
-              </span>
-              <Settings size={17} />
-            </button>
           </div>
         </aside>
         <main className="app-main">
@@ -358,7 +376,7 @@ export function WorkspaceApp({
             >
               <Menu size={22} />
             </button>
-            {workspace ? (
+            {workspace || view === 'dms' || view === 'activity' ? (
               <div className="topbar-search">
                 <Search size={17} />
                 <input
@@ -408,19 +426,35 @@ export function WorkspaceApp({
               <div style={{ flex: 1 }} />
             )}
             <div className="topbar-actions">
+              {workspace && (
+                <>
+                  <button
+                    className={`icon-button topbar-nav ${view === 'people' ? 'active' : ''}`}
+                    aria-label="People"
+                    title="People"
+                    aria-current={view === 'people' ? 'page' : undefined}
+                    onClick={() => navigate('people')}
+                  >
+                    <Users size={20} />
+                  </button>
+                </>
+              )}
+              <button
+                className={`icon-button topbar-nav ${view === 'activity' ? 'active' : ''}`}
+                aria-label="Alerts"
+                title="Alerts"
+                aria-current={view === 'activity' ? 'page' : undefined}
+                onClick={() => navigate('activity')}
+              >
+                <Bell size={20} />
+                <UnreadBadge count={unread.total} />
+              </button>
               <button className="icon-button" aria-label="Help" onClick={() => setDialog('help')}>
                 <HelpCircle size={20} />
               </button>
               <button
-                className="icon-button"
-                aria-label="Account settings"
-                onClick={() => navigate('settings')}
-              >
-                <Settings size={20} />
-              </button>
-              <button
                 className="profile-button"
-                aria-label="Your profile"
+                aria-label="Account settings"
                 onClick={() => navigate('settings')}
               >
                 <Avatar name={user.email} small />
@@ -435,6 +469,31 @@ export function WorkspaceApp({
           )}
           {view === 'settings' ? (
             <Account user={user} updateUser={setUser} signOut={signOut} />
+          ) : view === 'dms' ? (
+            <DirectMessages
+              user={user}
+              selectedId={routeDirect}
+              filter={filter}
+              select={(id) => {
+                setFilter('');
+                router.push(`/dms${id ? `/${id}` : ''}`);
+              }}
+            />
+          ) : view === 'activity' ? (
+            <Alerts
+              key={user.id}
+              workspaces={workspaces}
+              user={user}
+              query={filter}
+              open={(item) => {
+                setFilter('');
+                if (item.direct_key) navigate('dms', item.id);
+                else {
+                  setWorkspaceId(item.workspace_id);
+                  router.push(`/w/${item.workspace_id}/channel/${item.id}`);
+                }
+              }}
+            />
           ) : !workspace ? (
             <section className="page home-page">
               <div className="page-heading">
@@ -658,26 +717,6 @@ export function WorkspaceApp({
                 </Empty>
               )}
             </section>
-          ) : view === 'dms' ? (
-            <DirectMessages
-              key={workspaceId}
-              workspace={workspaceId}
-              user={user}
-              selectedId={routeDirect}
-              filter={filter}
-              select={(id) => {
-                setFilter('');
-                router.push(`/w/${workspaceId}/dms${id ? `/${id}` : ''}`);
-              }}
-            />
-          ) : view === 'activity' ? (
-            <Alerts
-              key={`${user.id}:${workspaceId}`}
-              workspace={workspaceId}
-              user={user}
-              query={filter}
-              open={(item) => navigate(item.direct_key ? 'dms' : 'channel', item.id)}
-            />
           ) : view === 'people' ? (
             <People
               key={workspaceId}
@@ -686,33 +725,13 @@ export function WorkspaceApp({
               role={role}
               leave={() => setDialog('leave-workspace')}
             />
-          ) : (
-            <Empty
-              title={
-                {
-                  saved: 'Keep the good stuff close',
-                }[view]
-              }
-              action={
-                <button className="primary" onClick={() => navigate('channels')}>
-                  Explore channels <ArrowRight size={17} />
-                </button>
-              }
-            >
-              {
-                {
-                  saved:
-                    'Saved messages are coming soon. Your channel conversations are always there when you need them.',
-                }[view]
-              }
-            </Empty>
-          )}
+          ) : null}
         </main>
         {dialog && (
           <Modal
             title={
               {
-                workspace: 'Your workspaces',
+                'add-workspace': 'Add a workspace',
                 'create-workspace': 'Create a workspace',
                 'create-channel': 'Create a channel',
                 join: 'Join your team',
@@ -722,33 +741,13 @@ export function WorkspaceApp({
             }
             close={() => setDialog(null)}
           >
-            {dialog === 'workspace' ? (
+            {dialog === 'add-workspace' ? (
               <div className="form-stack">
-                {workspaces.map((item) => (
-                  <button
-                    className="workspace-option"
-                    key={item.id}
-                    onClick={() => switchWorkspace(item.id)}
-                  >
-                    <span className="logo">{item.name[0]}</span>
-                    <strong>{item.name}</strong>
-                    <ArrowRight size={18} />
-                  </button>
-                ))}
                 <button onClick={() => setDialog('create-workspace')}>
                   <Plus size={17} />
                   Create a workspace
                 </button>
                 <button onClick={() => setDialog('join')}>Join with an invite</button>
-                {workspace && (
-                  <button className="danger-outline" onClick={() => setDialog('leave-workspace')}>
-                    <LogOut size={17} /> Leave workspace
-                  </button>
-                )}
-                <button className="text-button" onClick={signOut}>
-                  <LogOut size={17} />
-                  Sign out
-                </button>
               </div>
             ) : dialog === 'leave-workspace' ? (
               workspace && (

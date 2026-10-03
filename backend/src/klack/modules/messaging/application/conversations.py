@@ -4,7 +4,11 @@ from uuid import UUID
 
 from klack.modules.channels.application.ports import WorkspaceAccessGateway
 from klack.modules.channels.application.service import ChannelView
-from klack.modules.channels.domain.errors import ChannelArchived, TargetWorkspaceMembershipNotFound
+from klack.modules.channels.domain.errors import (
+    ChannelArchived,
+    ChannelNotFound,
+    TargetWorkspaceMembershipNotFound,
+)
 from klack.modules.identity.application.verification import EmailVerificationGateway
 from klack.modules.messaging.application.ports import (
     ChannelContentAccessGateway,
@@ -18,6 +22,7 @@ from klack.modules.messaging.domain.errors import (
     MessageDeleted,
     MessageNotFound,
 )
+from klack.modules.workspaces.domain.entities import WorkspaceMembership
 
 REACTIONS = frozenset({"👍", "❤️", "😂", "🎉", "👀", "✅"})
 
@@ -79,6 +84,41 @@ class ConversationService:
             (ChannelView(channel=channel, is_member=True), message, count)
             for channel, message, count in await self.repository.alerts(workspace_id, actor)
         ]
+
+    async def open_global_direct(self, actor: UUID, target: UUID) -> ChannelView:
+        if actor == target:
+            raise InvalidMessageBody
+        existing = await self.repository.existing_direct(actor, target)
+        if existing is not None:
+            return ChannelView(channel=existing, is_member=True)
+        workspace = await self.repository.shared_workspace(actor, target)
+        if workspace is None:
+            raise TargetWorkspaceMembershipNotFound
+        return await self.open_direct(workspace, actor, target)
+
+    async def global_direct(self, actor: UUID) -> list[ChannelView]:
+        return [
+            ChannelView(channel=c, is_member=True)
+            for c in await self.repository.list_direct(None, actor)
+        ]
+
+    async def resolve_direct(self, channel_id: UUID, actor: UUID) -> ChannelView:
+        channel = await self.repository.resolve_direct(channel_id, actor)
+        if channel is None:
+            raise ChannelNotFound
+        return ChannelView(channel=channel, is_member=True)
+
+    async def global_alerts(self, actor: UUID) -> list[tuple[ChannelView, Message, int]]:
+        return [
+            (ChannelView(channel=c, is_member=True), m, n)
+            for c, m, n in await self.repository.alerts(None, actor)
+        ]
+
+    async def unread_counts(self, actor: UUID) -> list[tuple[UUID, UUID, bool, int]]:
+        return await self.repository.unread_counts(actor)
+
+    async def contacts(self, actor: UUID) -> list[WorkspaceMembership]:
+        return await self.repository.contacts(actor)
 
     async def react(
         self,

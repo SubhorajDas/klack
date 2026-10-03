@@ -24,7 +24,7 @@ lines = [
     f"# Klack performance test — {summary['run']}", "",
     f"**Result: {'ALL THRESHOLDS PASSED' if not bad_thresholds else 'THRESHOLDS FAILED'}{' — timing qualification applies' if points['request_gaps_over_15s'] else ''}**", "",
     f"Ran {summary['users']} concurrent virtual users for {summary['duration']}, including the main account and {summary['users'] - 1} newly registered test accounts. Setup ran before the timed workload. Data remains available in the application.", "",
-    f"Open **K6 {summary['run']} - shared hub** to inspect chat, threads, reactions, and DMs. Project workspaces use the same run prefix.", "",
+    f"Open **K6 {summary['run']} - shared hub** to inspect chat, quoted replies, reactions, and DMs. Project workspaces use the same run prefix.", "",
     "## Measured results", "",
     "| Metric | Result |", "|---|---:|",
     f"| Timed HTTP requests | {points['requests']:,} |",

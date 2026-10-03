@@ -37,7 +37,7 @@ class ChannelRecord(Base):
             name="archival_timestamp_actor_pair",
         ),
         UniqueConstraint("workspace_id", "name"),
-        UniqueConstraint("workspace_id", "direct_key"),
+        UniqueConstraint("direct_key"),
         CheckConstraint("direct_key IS NULL OR visibility = 'private'", name="direct_is_private"),
         UniqueConstraint("workspace_id", "id"),
         Index(
@@ -83,8 +83,8 @@ class ChannelMembershipRecord(Base):
             ondelete="CASCADE",
         ),
         ForeignKeyConstraint(
-            ["workspace_id", "user_id"],
-            ["workspace_memberships.workspace_id", "workspace_memberships.user_id"],
+            ["user_id"],
+            ["identity_users.id"],
             ondelete="CASCADE",
         ),
         Index(
@@ -110,3 +110,15 @@ class ChannelMembershipRecord(Base):
         nullable=False,
     )
     joined_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class DirectAliasRecord(Base):
+    """Keep old direct-conversation links resolvable after history consolidation."""
+
+    __tablename__ = "message_direct_aliases"
+    old_channel_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    channel_id: Mapped[UUID] = mapped_column(
+        Uuid,
+        ForeignKey("channel_channels.id", ondelete="CASCADE"),
+        nullable=False,
+    )

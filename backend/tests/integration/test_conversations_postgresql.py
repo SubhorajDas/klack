@@ -71,7 +71,7 @@ async def test_concurrent_direct_creation_reactions_and_cursors(message_containe
                 workspace_id=seeded.workspace_id,
                 channel_id=channel_id,
                 body=f"Reply {index}",
-                parent_message_id=root.id,
+                reply_to_message_id=root.id,
             )
 
     replies = await asyncio.gather(*(reply(i) for i in range(4)))
@@ -99,10 +99,11 @@ async def test_concurrent_direct_creation_reactions_and_cursors(message_containe
         page = await _message_service(container, session).list_messages(
             actor_user_id=seeded.owner_id, workspace_id=seeded.workspace_id, channel_id=channel_id
         )
-        assert len(page.messages) == 1
-        assert page.messages[0].reply_count == 4
-        assert len(page.messages[0].reactions) == 2
-        assert page.messages[0].revision == 7
+        assert len(page.messages) == 5
+        assert all(m.quote and m.quote.id == root.id for m in page.messages if m.id != root.id)
+        original = next(m for m in page.messages if m.id == root.id)
+        assert len(original.reactions) == 2
+        assert original.revision == 3
 
 
 async def test_alerts_postgresql_threads_read_snapshot_and_membership(
@@ -124,7 +125,7 @@ async def test_alerts_postgresql_threads_read_snapshot_and_membership(
             workspace_id=seeded.workspace_id,
             channel_id=seeded.channel_id,
             body="Unread thread reply",
-            parent_message_id=root.id,
+            reply_to_message_id=root.id,
         )
         await service.create_message(
             actor_user_id=other.owner_id,
@@ -136,7 +137,7 @@ async def test_alerts_postgresql_threads_read_snapshot_and_membership(
         assert len(alerts) == 1
         channel, preview, count = alerts[0]
         assert channel.channel.id == seeded.channel_id
-        assert preview.id == reply.id and preview.parent_message_id == root.id
+        assert preview.id == reply.id and preview.reply_to_message_id == root.id
         assert count == 2
         assert await conversation(session).alerts(seeded.workspace_id, seeded.owner_id) == []
     # A message committed after the displayed snapshot must survive marking it read.

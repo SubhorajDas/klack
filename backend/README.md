@@ -1,7 +1,7 @@
 # Klack backend
 
 The backend is a Python 3.13 FastAPI modular monolith packaged from `src/klack`. It implements
-identity, workspaces, channels, durable messaging, threads, reactions, read positions, private
+identity, workspaces, channels, durable messaging, quoted replies, reactions, read positions, private
 direct conversations, realtime delivery, and optional LiveKit voice calls.
 
 See the [full-app quick start](../README.md#quick-start), [development commands](../docs/development.md),
@@ -61,9 +61,10 @@ retry-safe client identifiers, revisions, and committed realtime signals. Messag
 REST; `/api/v1/realtime` uses the `klack.realtime.v1` WebSocket subprotocol for delivery.
 
 Channels live at `src/klack/modules/channels`, with explicit membership and reversible archival
-introduced by `20260911_0004`. Revision `20260925_0007` adds threads, reactions, read cursors,
+introduced by `20260911_0004`. Revision `20260925_0007` adds thread relationships, reactions, read cursors,
 and direct-conversation keys. Direct messages reuse channel-backed message access while excluding
-administrative participant changes and public discovery.
+administrative participant changes and public discovery. Revision `20261003_0010` converts
+thread relationships to inline quoted replies without copying or reordering stored messages.
 
 Calling lives at `src/klack/modules/calling`. Revision `20260925_0008` adds call history and
 exclusive participant seats. The API controls authorization, device/session ownership, leases,

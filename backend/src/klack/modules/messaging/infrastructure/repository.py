@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy import and_, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult
@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from klack.modules.files.domain import Attachment
 from klack.modules.files.models import FileRecord
-from klack.modules.messaging.domain.entities import Message
+from klack.modules.messaging.domain.entities import Message, MessageQuote
 from klack.modules.messaging.infrastructure.models import MessageRecord, ReactionRecord
 
 
@@ -94,11 +94,9 @@ class SqlAlchemyMessageRepository:
         before_created_at: datetime | None,
         before_message_id: UUID | None,
         limit: int,
-        parent_message_id: UUID | None = None,
     ) -> list[Message]:
         statement = select(MessageRecord).where(
             MessageRecord.channel_id == channel_id,
-            MessageRecord.parent_message_id == parent_message_id,
         )
         if before_created_at is not None and before_message_id is not None:
             statement = statement.where(
@@ -118,6 +116,34 @@ class SqlAlchemyMessageRepository:
             )
         ).all()
         return await self._messages(records)
+
+    async def message_context(self, anchor: Message, limit: int) -> list[Message]:
+        """Read a bounded window around an authorized message, including tombstones."""
+        older = await self.list_messages(
+            channel_id=anchor.channel_id,
+            before_created_at=anchor.created_at,
+            before_message_id=anchor.id,
+            limit=limit,
+        )
+        records = (
+            await self._session.scalars(
+                select(MessageRecord)
+                .where(
+                    MessageRecord.channel_id == anchor.channel_id,
+                    or_(
+                        MessageRecord.created_at > anchor.created_at,
+                        and_(
+                            MessageRecord.created_at == anchor.created_at,
+                            MessageRecord.id > anchor.id,
+                        ),
+                    ),
+                )
+                .order_by(MessageRecord.created_at, MessageRecord.id)
+                .limit(limit)
+            )
+        ).all()
+        newer = await self._messages(records)
+        return [*reversed(newer), anchor, *older]
 
     async def update_message(
         self,
@@ -172,16 +198,36 @@ class SqlAlchemyMessageRepository:
             )
         ).all():
             reactions[message_id].append((emoji, user_id))
-        count_rows = (
-            await self._session.execute(
-                select(MessageRecord.parent_message_id, func.count())
-                .where(MessageRecord.parent_message_id.in_(ids))
-                .group_by(MessageRecord.parent_message_id)
+        target_ids = {row.reply_to_message_id for row in records if row.reply_to_message_id}
+        targets = (
+            (
+                await self._session.scalars(
+                    select(MessageRecord).where(MessageRecord.id.in_(target_ids))
+                )
+            ).all()
+            if target_ids
+            else []
+        )
+        quotes = {
+            (row.channel_id, row.id): MessageQuote(
+                id=row.id,
+                author_user_id=row.author_user_id,
+                body=None if row.deleted_at else (row.body or "")[:240],
+                deleted_at=row.deleted_at,
+                revision=row.revision,
+                attachment_count=0 if row.deleted_at else row.attachment_count,
             )
-        ).all()
-        counts = {parent: count for parent, count in count_rows}
+            for row in targets
+        }
         return [
-            self._domain(row, tuple(reactions[row.id]), counts.get(row.id, 0), tuple(files[row.id]))
+            self._domain(
+                row,
+                tuple(reactions[row.id]),
+                quotes.get((row.channel_id, row.reply_to_message_id))
+                if row.reply_to_message_id
+                else None,
+                tuple(files[row.id]),
+            )
             for row in records
         ]
 
@@ -189,14 +235,14 @@ class SqlAlchemyMessageRepository:
     def _domain(
         record: MessageRecord,
         reactions: tuple[tuple[str, UUID], ...],
-        count: int,
+        quote: MessageQuote | None,
         attachments: tuple[Attachment, ...] = (),
     ) -> Message:
         return Message(
             attachments=attachments if record.deleted_at is None else (),
-            parent_message_id=record.parent_message_id,
+            reply_to_message_id=record.reply_to_message_id,
             reactions=reactions if record.deleted_at is None else (),
-            reply_count=count or 0,
+            quote=quote if record.deleted_at is None else None,
             id=record.id,
             workspace_id=record.workspace_id,
             channel_id=record.channel_id,
@@ -217,7 +263,7 @@ class SqlAlchemyMessageRepository:
     def _record_values(message: Message) -> dict[str, object]:
         return {
             "attachment_count": len(message.attachments),
-            "parent_message_id": message.parent_message_id,
+            "reply_to_message_id": message.reply_to_message_id,
             "id": message.id,
             "workspace_id": message.workspace_id,
             "channel_id": message.channel_id,

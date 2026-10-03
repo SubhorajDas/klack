@@ -80,6 +80,34 @@ class ChannelContentAccessService:
         for_update: bool,
     ) -> Channel:
         """Return a channel only when the actor is an explicit channel member."""
+        # DMs belong to their participants; workspace_id is only a storage locator.
+        channel = await self._repository.get_channel(
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            for_update=False,
+        )
+        if channel is not None and channel.direct_key is not None:
+            if for_update:
+                channel = await self._repository.get_channel(
+                    workspace_id=workspace_id,
+                    channel_id=channel_id,
+                    for_update=True,
+                )
+                if channel is None or channel.direct_key is None:
+                    raise ChannelNotFound
+            membership = await self._repository.get_membership(
+                channel_id=channel_id,
+                user_id=actor_user_id,
+                for_update=for_update,
+            )
+            if (
+                membership is None
+                or channel.direct_key is None
+                or actor_user_id.hex not in channel.direct_key.split(":")
+            ):
+                await self._rollback_if_locked(for_update)
+                raise ChannelNotFound
+            return channel
         actor = await self._workspace_access.require_membership(
             actor_user_id=actor_user_id,
             workspace_id=workspace_id,

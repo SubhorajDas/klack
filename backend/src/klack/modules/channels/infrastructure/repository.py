@@ -17,6 +17,7 @@ from klack.modules.channels.infrastructure.models import (
     ChannelMembershipRecord,
     ChannelRecord,
 )
+from klack.modules.workspaces.infrastructure.models import MembershipRecord
 
 
 class SqlAlchemyChannelRepository:
@@ -159,6 +160,17 @@ class SqlAlchemyChannelRepository:
         return [self._membership(record) for record in records]
 
     async def add_membership(self, membership: ChannelMembership) -> None:
+        channel = await self._session.get(ChannelRecord, membership.channel_id)
+        if (
+            channel is not None
+            and channel.direct_key is None
+            and await self._session.get(
+                MembershipRecord, (membership.workspace_id, membership.user_id)
+            )
+            is None
+        ):
+            await self._session.rollback()
+            raise ChannelConflict
         self._session.add(self._membership_record(membership))
         await self._flush()
 

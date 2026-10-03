@@ -13,7 +13,7 @@ const success = new Rate('journey_success');
 const latency = new Trend('journey_duration', true);
 const accepted = new Counter('invitations_accepted');
 const errors = new Counter('api_errors');
-const kinds = ['read', 'chat', 'dm', 'thread', 'react', 'channel', 'workspace', 'invite'];
+const kinds = ['read', 'chat', 'dm', 'reply', 'react', 'channel', 'workspace', 'invite'];
 const weights = [30, 25, 15, 12, 10, 3, 2, 3];
 const thresholds = {
   'http_req_failed{phase:load}': ['rate<0.01'],
@@ -60,7 +60,7 @@ function uuid() {
   return `${s.slice(0,8)}-${s.slice(8,12)}-${s.slice(12,16)}-${s.slice(16,20)}-${s.slice(20)}`;
 }
 function postMessage(jar, w, c, body, parent) {
-  return request(jar, 'POST', `${cp(w,c)}/messages`, { body, client_message_id: uuid(), ...(parent ? { parent_message_id: parent } : {}) }, 'message.create');
+  return request(jar, 'POST', `${cp(w,c)}/messages`, { body, client_message_id: uuid(), ...(parent ? { reply_to_message_id: parent } : {}) }, 'message.create');
 }
 function inviteToken(url) {
   const marker = '#token=';
@@ -164,11 +164,11 @@ function journey(data, kind) {
     postMessage(jar, data.hub, data.channel, `[${RUN}] User ${state.index + 1}: ${choose(['Sharing a project update.', 'Ready to review the next task.', 'The new workspace is ready.', 'Discussing the next release.'])} (${exec.vu.iterationInScenario})`);
   } else {
     const messages = request(jar, 'GET', `${channelPath}/messages?limit=50`, null, 'message.history').messages.filter(m => m.body);
-    if (!messages.length) throw new Error('No root messages available');
+    if (!messages.length) throw new Error('No messages available');
     const root = choose(messages);
-    if (kind === 'thread') {
+    if (kind === 'reply') {
       postMessage(jar, data.hub, data.channel, `[${RUN}] User ${state.index + 1}: replying to this discussion.`, root.id);
-      request(jar, 'GET', `${channelPath}/messages?parent_message_id=${root.id}`, null, 'thread.history');
+      request(jar, 'GET', `${channelPath}/messages?around=${root.id}`, null, 'reply.context');
     } else if (kind === 'react') {
       request(jar, 'PUT', `${channelPath}/messages/${root.id}/reactions/${encodeURIComponent(choose(['👍','❤️','😂','🎉','👀','✅']))}`, null, 'reaction.add');
     } else {

@@ -19,7 +19,7 @@ Defaults: 20 concurrent users (the main account plus 19 synthetic accounts), 20 
 | Browse history/workspaces/channels and advance read cursor | 30% |
 | Send channel message | 25% |
 | Open DM and send/read messages | 15% |
-| Reply to a root message and read thread | 12% |
+| Quote a message and read its context | 12% |
 | React to a message | 10% |
 | Create channel | 3% |
 | Create workspace | 2% |

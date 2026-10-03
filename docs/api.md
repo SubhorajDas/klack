@@ -10,7 +10,7 @@ API at `/openapi.json`; interactive `/docs` is development-only.
 `GET /workspaces/{workspace_id}/alerts` requires an authenticated workspace member and returns
 `{ alerts: [{ channel, message, unread_count }] }`, ordered by the latest unread message, newest
 first. Each entry represents an explicitly joined channel or DM, including archived channels.
-Messages by the current user and deleted messages are excluded; thread replies are included.
+Messages by the current user and deleted messages are excluded; quoted replies are included.
 The preview is the newest unread message, with the usual message and attachment metadata.
 Channels without unread messages are omitted. Channel membership limits visibility, including
 for workspace admins; nonmembers cannot inspect private conversations.
@@ -124,13 +124,18 @@ does not grant message access: every operation requires current explicit channel
 Clients may supply `client_message_id` on creation and must reuse it when retrying an uncertain
 response. Messages expose a monotonic `revision` for deduplication and convergence.
 
-## Threads, reactions, read cursors, and direct messages
+## Quoted replies, reactions, read cursors, and direct messages
 
-- Set `parent_message_id` when creating a reply. List replies with
-  `GET .../messages?parent_message_id=<root-id>`, using the same `before` pagination.
-  The default history contains root messages only. Replies cannot have nested replies, and their
-  root must belong to the same channel. Deleted roots retain their threads.
-- Messages include `parent_message_id`, `reply_count`, and `reactions` (emoji/user-ID pairs).
+- Set `reply_to_message_id` when creating a quoted reply. All messages and replies appear in
+  the default history in chronological order, with the same `before` pagination. Any message,
+  including a reply or a deleted tombstone, can be referenced within the same channel.
+  `GET .../messages?around=<message-id>&limit=50` loads up to 25 messages on each side plus the
+  original, with a `next_before` cursor for older history. `around` and `before` are exclusive.
+- Messages include `reply_to_message_id`, `quote`, and `reactions` (emoji/user-ID pairs).
+  The shallow quote contains the original's ID, author, current body excerpt (up to 240
+  characters), revision, deletion time, and attachment count. It never recursively quotes
+  another message. Deleted originals have no body or attachment preview; deleted replies
+  expose no quote. REST history and realtime delivery use the same preview contract.
   `PUT|DELETE .../messages/{message_id}/reactions/{emoji}` adds/removes your reaction idempotently.
   Supported reactions are 👍, ❤️, 😂, 🎉, 👀, and ✅. Archived channels and deleted messages reject
   reaction changes. Replies and reaction changes use the existing committed realtime delivery.
@@ -140,13 +145,21 @@ response. Messages expose a monotonic `revision` for deduplication and convergen
   position. The UI marks visible conversations read at the bottom and refreshes badges every 15
   seconds, on visibility changes, and after local reads. These are private positions, not shared
   read receipts. Reading a later message acknowledges all earlier messages in that conversation.
-- `POST /api/v1/workspaces/{workspace_id}/direct-messages` accepts `{"user_id":"<uuid>"}` and opens
-  or returns the one-to-one conversation for that pair. GET lists only your direct conversations.
-  Both people must be current workspace members. Returned channel IDs work with the existing
-  messaging, reaction, read-cursor, and WebSocket endpoints.
+- `GET|POST /api/v1/direct-messages` lists personal conversations or opens the unique conversation
+  for `{"user_id":"<uuid>"}`. A new pair requires a shared workspace; existing DMs remain available
+  after either person leaves it. `GET /api/v1/contacts` returns shared-workspace teammates and existing
+  DM peers. `GET /api/v1/direct-messages/{id}` resolves both current and pre-consolidation IDs.
+- Legacy workspace DM endpoints remain compatible but return the same global pair. Use the returned
+  channel's `workspace_id` as the storage locator with messaging, reactions, read-cursor, files,
+  calls, and WebSocket endpoints; the currently selected workspace does not govern DM access.
+- `GET /api/v1/alerts` lists unread conversations across current channel memberships and personal DMs.
+  `GET /api/v1/unread-counts` returns `total`, `direct_messages`, and `workspaces`/`channels` maps keyed
+  by ID. Counts represent unread live messages from other people, not the number of conversations.
+  Workspace totals exclude DMs; `total` combines both. The shell refreshes every five seconds while
+  visible and after read/message events. The count endpoint does not hydrate message bodies.
 - DMs are excluded from channel discovery. Administrators cannot inspect, join, rename, archive,
-  make public, or change their participants. Workspace removal revokes access; explicitly reopening
-  the same pair after workspace rejoining restores participation and existing history.
+  make public, or change their participants. Workspace removal revokes workspace-channel access,
+  while personal DM history, messages, files, and calls remain accessible to the two participants.
 
 ## Realtime API
 

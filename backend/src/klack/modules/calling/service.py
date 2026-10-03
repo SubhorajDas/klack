@@ -12,7 +12,7 @@ from klack.core.config import Settings
 from klack.modules.calling.models import CallRecord, CallSeatRecord
 from klack.modules.channels.infrastructure.models import ChannelMembershipRecord, ChannelRecord
 from klack.modules.identity.infrastructure.models import AuthSessionRecord, UserRecord
-from klack.modules.workspaces.infrastructure.models import MembershipRecord, WorkspaceRecord
+from klack.modules.workspaces.infrastructure.models import WorkspaceRecord
 
 LIVE = ("ringing", "active")
 RING_SECONDS = 45
@@ -38,10 +38,7 @@ def room_name(call_id: UUID) -> str:
 async def has_access(session: AsyncSession, call: CallRecord, actor: UUID) -> bool:
     if actor not in (call.caller_id, call.callee_id):
         return False
-    return bool(
-        await session.get(MembershipRecord, (call.workspace_id, actor))
-        and await session.get(ChannelMembershipRecord, (call.channel_id, actor))
-    )
+    return bool(await session.get(ChannelMembershipRecord, (call.channel_id, actor)))
 
 
 async def finish(session: AsyncSession, call: CallRecord, status: str, now: datetime) -> None:
@@ -109,7 +106,6 @@ class CallService:
             not channel
             or channel.workspace_id != workspace
             or not channel.direct_key
-            or not await self.session.get(MembershipRecord, (workspace, actor))
             or not await self.session.get(ChannelMembershipRecord, (channel_id, actor))
         ):
             raise HTTPException(404, "Direct conversation not found.")
@@ -119,9 +115,7 @@ class CallService:
         if actor not in peers:
             raise HTTPException(404, "Direct conversation not found.")
         peer = next(value for value in peers if value != actor)
-        if not await self.session.get(
-            MembershipRecord, (workspace, peer)
-        ) or not await self.session.get(ChannelMembershipRecord, (channel_id, peer)):
+        if not await self.session.get(ChannelMembershipRecord, (channel_id, peer)):
             raise HTTPException(409, "This person is no longer in the conversation.")
         users = list(
             await self.session.scalars(

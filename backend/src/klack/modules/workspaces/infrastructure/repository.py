@@ -9,6 +9,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from klack.modules.channels.infrastructure.models import ChannelMembershipRecord, ChannelRecord
 from klack.modules.identity.infrastructure.models import UserRecord
 from klack.modules.workspaces.application.ports import WorkspaceConflict
 from klack.modules.workspaces.domain.entities import (
@@ -150,6 +151,16 @@ class SqlAlchemyWorkspaceRepository:
         workspace_id: UUID,
         user_id: UUID,
     ) -> None:
+        # Workspace departures revoke channel access without erasing personal DMs.
+        await self._session.execute(
+            delete(ChannelMembershipRecord).where(
+                ChannelMembershipRecord.workspace_id == workspace_id,
+                ChannelMembershipRecord.user_id == user_id,
+                ChannelMembershipRecord.channel_id.in_(
+                    select(ChannelRecord.id).where(ChannelRecord.direct_key.is_(None))
+                ),
+            )
+        )
         await self._session.execute(
             delete(MembershipRecord).where(
                 MembershipRecord.workspace_id == workspace_id,

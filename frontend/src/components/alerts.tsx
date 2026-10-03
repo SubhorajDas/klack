@@ -11,7 +11,7 @@ import {
   ArrowUpRight,
 } from 'lucide-react';
 import { api, errorMessage } from '@/lib/api';
-import { channelPath, workspacePath, type Channel, type Message, type User } from '@/lib/types';
+import { channelPath, type Channel, type Message, type User, type Workspace } from '@/lib/types';
 import { useMemberName } from '@/lib/member-names';
 import { Alert, Avatar, Empty, Loading } from './ui';
 
@@ -19,12 +19,12 @@ type InboxAlert = { channel: Channel; message: Message; unread_count: number };
 type Filter = 'all' | 'channels' | 'dms';
 
 export function Alerts({
-  workspace,
+  workspaces,
   user,
   query,
   open,
 }: {
-  workspace: string;
+  workspaces: Workspace[];
   user: User;
   query: string;
   open: (channel: Channel) => void;
@@ -46,7 +46,7 @@ export function Alerts({
       pending = true;
       const current = ++generation.current;
       try {
-        const data = await api<{ alerts: InboxAlert[] }>(`${workspacePath(workspace)}/alerts`);
+        const data = await api<{ alerts: InboxAlert[] }>('/alerts');
         if (!stopped && current === generation.current) {
           setItems(data.alerts);
           setError('');
@@ -70,7 +70,7 @@ export function Alerts({
       window.removeEventListener('klack:messages-changed', refresh);
       window.removeEventListener('klack:read', refresh);
     };
-  }, [workspace, attempt]);
+  }, [attempt]);
 
   function title(channel: Channel) {
     const peer = channel.direct_key?.split(':').find((id) => id !== user.id.replaceAll('-', ''));
@@ -92,7 +92,7 @@ export function Alerts({
     const results = await Promise.allSettled(
       targets.map(async (item) => {
         const result = await api<{ unread_count: number }>(
-          `${channelPath(workspace, item.channel.id)}/read-cursor`,
+          `${channelPath(item.channel.workspace_id, item.channel.id)}/read-cursor`,
           'PUT',
           { message_id: item.message.id },
         );
@@ -145,7 +145,7 @@ export function Alerts({
           </h2>
           <p>
             {items.length
-              ? `Across ${items.length} conversation${items.length === 1 ? '' : 's'} in this workspace.`
+              ? `Across ${items.length} conversation${items.length === 1 ? '' : 's'} across your account.`
               : 'New messages from your channels and teammates will appear here.'}
           </p>
         </div>
@@ -196,6 +196,12 @@ export function Alerts({
                 <div className="alert-context">
                   {item.channel.direct_key ? <MessageCircle size={15} /> : <Hash size={15} />}
                   <strong>{title(item.channel)}</strong>
+                  {!item.channel.direct_key && (
+                    <span>
+                      {workspaces.find((w) => w.id === item.channel.workspace_id)?.name ||
+                        'Workspace'}
+                    </span>
+                  )}
                   {item.channel.archived_at && <span>Archived</span>}
                   <time dateTime={item.message.created_at}>
                     {new Date(item.message.created_at).toLocaleString(undefined, {
@@ -208,7 +214,7 @@ export function Alerts({
                 </div>
                 <p className="alert-author">
                   {name(item.message.author_user_id, user)}
-                  {item.message.parent_message_id ? ' replied in a thread' : ' sent a message'}
+                  {item.message.reply_to_message_id ? ' replied to a message' : ' sent a message'}
                 </p>
                 <p className="alert-preview">
                   {item.message.body ||

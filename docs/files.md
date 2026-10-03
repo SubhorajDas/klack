@@ -1,6 +1,6 @@
 # File sharing
 
-Channels, private DMs, and thread replies support up to five attachments per message,
+Channels, private DMs, and quoted replies support up to five attachments per message,
 25 MiB each by default, with optional text. The shared composer supports the file picker,
 drag-and-drop, pasted images, upload progress, removal, and individual retries. Ready uploads
 survive tab reloads for 24 hours. Incomplete local files must be selected again after reload.
@@ -114,7 +114,7 @@ cleanup. The downgrade refuses to silently discard live files or file-only messa
 ## Verification
 
 The API tests exercise real SQLAlchemy services on a temporary SQLite database, including
-file-only messages, retries, thread attachments, access revocation, cleanup, previews, and
+file-only messages, retries, quoted attachments, access revocation, cleanup, previews, and
 quotas. Storage tests cover local immutability, S3 request contracts, scanner failures, and
 production configuration. Browser tests cover the real Next.js proxy against the fixture API.
 PostgreSQL integration tests require the separate disposable database documented in

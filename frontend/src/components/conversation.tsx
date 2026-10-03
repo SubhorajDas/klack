@@ -12,6 +12,7 @@ import {
   X,
   MoreHorizontal,
   Pencil,
+  Quote,
   Trash2,
   WifiOff,
   Check,
@@ -23,8 +24,16 @@ import {
 } from 'lucide-react';
 import { useMemberName } from '@/lib/member-names';
 import { api, ApiError, errorMessage } from '@/lib/api';
-import { channelPath, type Channel, type Message, type User, type Membership } from '@/lib/types';
+import {
+  channelPath,
+  type Channel,
+  type Message,
+  type MessageQuote,
+  type User,
+  type Membership,
+} from '@/lib/types';
 import { useConversation } from '@/lib/use-conversation';
+import { quoteMessage } from '@/lib/messages';
 import { Alert, Avatar, Empty, Loading, Modal } from './ui';
 import { CallHistory, useCalls } from './calls';
 import { FilePicker, FilesPanel, MessageAttachments, type QueuedFile } from './files';
@@ -123,7 +132,9 @@ function JoinedConversation({
   const chat = useConversation(channel.workspace_id, channel.id);
   const calls = useCalls();
   const [tab, setTab] = useState('messages');
-  const [thread, setThread] = useState<Message | null>(null);
+  const replyAction = useRef<(message: Message) => void>(() => {});
+  const [highlighted, setHighlighted] = useState<string | null>(null);
+  const [jumpTarget, setJumpTarget] = useState<string | null>(null);
   const [details, setDetails] = useState<Message | null>(null);
   const [settings, setSettings] = useState(false);
   const [editing, setEditing] = useState<Message | null>(null);
@@ -148,6 +159,29 @@ function JoinedConversation({
       list.current?.scrollTo({ top: list.current.scrollHeight });
     lastId.current = newest || '';
   }, [chat.messages]);
+  async function jumpTo(id: string) {
+    setError('');
+    if (filter && !visible.some((m) => m.id === id)) {
+      setError('Clear the search to view the original message.');
+      return;
+    }
+    atBottom.current = false;
+    if (!chat.messages.some((m) => m.id === id) && !(await chat.jump(id))) return;
+    setJumpTarget(id);
+  }
+  useEffect(() => {
+    if (!jumpTarget) return;
+    const element = document.getElementById(`message-${jumpTarget}`);
+    if (!element) return;
+    element.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    setHighlighted(jumpTarget);
+    setJumpTarget(null);
+  }, [chat.messages, jumpTarget]);
+  useEffect(() => {
+    if (!highlighted) return;
+    const timer = setTimeout(() => setHighlighted(null), 1800);
+    return () => clearTimeout(timer);
+  }, [highlighted]);
   async function markRead() {
     const newest = chat.messages.at(-1);
     if (
@@ -155,7 +189,7 @@ function JoinedConversation({
       document.visibilityState !== 'visible' ||
       !atBottom.current ||
       tab !== 'messages' ||
-      thread ||
+      chat.browsingHistory ||
       filter
     )
       return;
@@ -177,7 +211,7 @@ function JoinedConversation({
       document.removeEventListener('visibilitychange', visible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat.messages, tab, filter, thread]);
+  }, [chat.messages, tab, filter, chat.browsingHistory]);
   async function remove() {
     if (!deleting) return;
     setBusy(true);
@@ -304,6 +338,25 @@ function JoinedConversation({
                 <Alert>{chat.error}</Alert>
               </div>
             )}
+            <Alert>{error}</Alert>
+            {chat.browsingHistory && (
+              <div className="history-banner">
+                <span>Viewing earlier messages</span>
+                <button
+                  disabled={chat.paging}
+                  onClick={async () => {
+                    if (await chat.latest()) {
+                      atBottom.current = true;
+                      requestAnimationFrame(() =>
+                        list.current?.scrollTo({ top: list.current.scrollHeight }),
+                      );
+                    }
+                  }}
+                >
+                  Back to latest
+                </button>
+              </div>
+            )}
             <div
               className="message-list"
               ref={list}
@@ -358,7 +411,10 @@ function JoinedConversation({
                           <span>{date}</span>
                         </div>
                       )}
-                      <article className={`message ${message.deleted_at ? 'deleted' : ''}`}>
+                      <article
+                        id={`message-${message.id}`}
+                        className={`message ${message.deleted_at ? 'deleted' : ''} ${highlighted === message.id ? 'message-highlight' : ''}`}
+                      >
                         <Avatar name={name} />
                         <div className="message-content">
                           <header>
@@ -374,6 +430,13 @@ function JoinedConversation({
                             </time>
                             {message.edited_at && !message.deleted_at && <small>edited</small>}
                           </header>
+                          {!message.deleted_at && message.quote && (
+                            <QuotePreview
+                              quote={message.quote}
+                              user={user}
+                              onClick={() => void jumpTo(message.quote!.id)}
+                            />
+                          )}
                           <p>{message.deleted_at ? 'This message was deleted.' : message.body}</p>
                           <MessageAttachments message={message} />
                           <Reactions
@@ -383,20 +446,18 @@ function JoinedConversation({
                             disabled={!!channel.archived_at}
                             changed={(m) => chat.merge([m])}
                           />
-                          <button
-                            className="text-button"
-                            onClick={() => {
-                              setDetails(null);
-                              setThread(message);
-                            }}
-                          >
-                            <MessageSquare size={14} />{' '}
-                            {message.reply_count
-                              ? `${message.reply_count} ${message.reply_count === 1 ? 'reply' : 'replies'}`
-                              : 'Reply in thread'}
-                          </button>
                         </div>
                         <div className="message-actions">
+                          {!message.deleted_at && !channel.archived_at && (
+                            <button
+                              className="icon-button"
+                              aria-label="Reply"
+                              title="Quote and reply"
+                              onClick={() => replyAction.current(message)}
+                            >
+                              <Quote size={16} />
+                            </button>
+                          )}
                           <button
                             className="icon-button"
                             aria-label="Message details"
@@ -453,22 +514,18 @@ function JoinedConversation({
                 sent={(message) => {
                   atBottom.current = true;
                   chat.merge([message]);
+                  if (chat.browsingHistory) void chat.latest();
                 }}
                 path={chat.path}
+                messages={chat.messages}
+                registerReply={(action) => {
+                  replyAction.current = action;
+                }}
               />
             )}
           </>
         )}
       </section>
-      {thread && chat.status !== 'Access unavailable' && (
-        <ThreadPanel
-          key={thread.id}
-          root={chat.messages.find((m) => m.id === thread.id) || thread}
-          channel={channel}
-          user={user}
-          close={() => setThread(null)}
-        />
-      )}
       {selected && (
         <aside className="detail-panel">
           <header>
@@ -490,15 +547,15 @@ function JoinedConversation({
             </p>
             <MessageAttachments message={selected} />
             <div className="detail-note">
-              <MessageSquare size={22} />
+              <Quote size={22} />
               <strong>Keep the conversation going</strong>
               <button
                 onClick={() => {
-                  setThread(selected);
+                  replyAction.current(selected);
                   setDetails(null);
                 }}
               >
-                Open thread
+                Reply
               </button>
             </div>
           </div>
@@ -576,21 +633,64 @@ function JoinedConversation({
   );
 }
 
-type Draft = { body: string; id: string; attempted: boolean; files?: QueuedFile[] };
+function QuotePreview({
+  quote,
+  user,
+  onClick,
+}: {
+  quote: MessageQuote;
+  user: User;
+  onClick?: () => void;
+}) {
+  const memberName = useMemberName();
+  const content = (
+    <>
+      <strong>{memberName(quote.author_user_id, user)}</strong>
+      <span>
+        {quote.deleted_at
+          ? 'Message deleted'
+          : quote.body ||
+            (quote.attachment_count === 1 ? 'Attachment' : `${quote.attachment_count} attachments`)}
+      </span>
+    </>
+  );
+  return onClick ? (
+    <button
+      type="button"
+      className="message-quote"
+      aria-label="View original message"
+      onClick={onClick}
+    >
+      {content}
+    </button>
+  ) : (
+    <div className="message-quote">{content}</div>
+  );
+}
+
+type Draft = {
+  body: string;
+  id: string;
+  attempted: boolean;
+  files?: QueuedFile[];
+  quote?: MessageQuote;
+};
 function Composer({
   user,
   channel,
   sent,
   path,
-  parent,
+  messages,
+  registerReply,
 }: {
   user: User;
   channel: Channel;
   sent: (message: Message) => void;
   path: string;
-  parent?: string;
+  messages: Message[];
+  registerReply: (action: (message: Message) => void) => void;
 }) {
-  const storageKey = `klack:draft:${user.id}:${channel.workspace_id}:${channel.id}:${parent || 'main'}`;
+  const storageKey = `klack:draft:${user.id}:${channel.workspace_id}:${channel.id}:main`;
   const [draft, setDraft] = useState<Draft>(() => {
     try {
       const stored = JSON.parse(sessionStorage.getItem(storageKey) || 'null');
@@ -620,6 +720,44 @@ function Composer({
   const filesReady = files.every((file) => !!file.attachment);
   const canSend = filesReady && (!!draft.body.trim() || files.length > 0);
   useEffect(() => {
+    registerReply((message) => {
+      if (draft.attempted || sending.current) {
+        setError('Retry the unconfirmed send before changing its quote.');
+        return;
+      }
+      setDraft((current) => ({ ...current, quote: quoteMessage(message) }));
+      input.current?.focus();
+    });
+  });
+  useEffect(() => {
+    if (!draft.quote) return;
+    const original = messages.find((m) => m.id === draft.quote!.id);
+    if (original && original.revision > draft.quote.revision)
+      setDraft((current) => ({ ...current, quote: quoteMessage(original) }));
+  }, [messages, draft.quote]);
+  useEffect(() => {
+    const id = draft.quote?.id;
+    if (!id) return;
+    let active = true;
+    // A restored draft can quote an original outside the newest history page.
+    api<{ messages: Message[] }>(`${path}?around=${id}&limit=2`)
+      .then((page) => {
+        const original = page.messages.find((m) => m.id === id);
+        if (active && original)
+          setDraft((current) =>
+            current.quote?.id === id && original.revision > current.quote.revision
+              ? { ...current, quote: quoteMessage(original) }
+              : current,
+          );
+      })
+      .catch(() => {
+        /* Sending still validates the quote against current channel access. */
+      });
+    return () => {
+      active = false;
+    };
+  }, [path, draft.quote?.id]);
+  useEffect(() => {
     try {
       sessionStorage.setItem(storageKey, JSON.stringify(draft));
     } catch {
@@ -642,7 +780,7 @@ function Composer({
         body: draft.body,
         client_message_id: draft.id,
         ...(files.length ? { attachment_ids: files.map((file) => file.attachment!.id) } : {}),
-        ...(parent ? { parent_message_id: parent } : {}),
+        ...(draft.quote ? { reply_to_message_id: draft.quote.id } : {}),
       });
       sent(message);
       const empty = { body: '', id: crypto.randomUUID(), attempted: false };
@@ -696,6 +834,23 @@ function Composer({
         </div>
       )}
       <form className={`composer ${error ? 'has-error' : ''}`} onSubmit={submit}>
+        {draft.quote && (
+          <div className="composer-quote" aria-label="Replying to message">
+            <QuotePreview quote={draft.quote} user={user} />
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Cancel reply"
+              disabled={draft.attempted || busy}
+              onClick={() => {
+                setDraft((current) => ({ ...current, quote: undefined }));
+                input.current?.focus();
+              }}
+            >
+              <X size={18} />
+            </button>
+          </div>
+        )}
         <div className="composer-toolbar">
           <MessageSquare size={16} />
           <strong>Message</strong>
@@ -705,7 +860,9 @@ function Composer({
           ref={input}
           aria-label={`Message ${channel.name}`}
           placeholder={
-            parent ? 'Reply in thread' : `Message ${channel.direct_key ? '' : '#'}${channel.name}`
+            draft.quote
+              ? 'Write a reply…'
+              : `Message ${channel.direct_key ? '' : '#'}${channel.name}`
           }
           maxLength={4000}
           value={draft.body}
@@ -1019,192 +1176,5 @@ function Reactions({
       })}
       <Alert>{error}</Alert>
     </div>
-  );
-}
-
-function ThreadPanel({
-  root,
-  channel,
-  user,
-  close,
-}: {
-  root: Message;
-  channel: Channel;
-  user: User;
-  close: () => void;
-}) {
-  const memberName = useMemberName();
-  const chat = useConversation(channel.workspace_id, channel.id, root.id);
-  const replies = useRef<HTMLDivElement>(null);
-  const atBottom = useRef(true);
-  async function markRead() {
-    const newest = chat.messages.at(-1);
-    if (!newest || !atBottom.current || document.visibilityState !== 'visible') return;
-    try {
-      await api(`${channelPath(channel.workspace_id, channel.id)}/read-cursor`, 'PUT', {
-        message_id: newest.id,
-      });
-      window.dispatchEvent(new Event('klack:read'));
-    } catch {
-      /* A visible refresh will retry. */
-    }
-  }
-  useEffect(() => {
-    if (atBottom.current) replies.current?.scrollTo({ top: replies.current.scrollHeight });
-    const timer = setTimeout(() => void markRead(), 700);
-    const visible = () => void markRead();
-    document.addEventListener('visibilitychange', visible);
-    return () => {
-      clearTimeout(timer);
-      document.removeEventListener('visibilitychange', visible);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat.messages]);
-  const [editing, setEditing] = useState<Message | null>(null);
-  const [deleting, setDeleting] = useState<Message | null>(null);
-  const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  return (
-    <aside className="detail-panel thread-panel">
-      <header>
-        <h2>Thread</h2>
-        <button className="icon-button" aria-label="Close thread" onClick={close}>
-          <X size={21} />
-        </button>
-      </header>
-      <div
-        className="thread-messages"
-        role="log"
-        aria-label="Thread replies"
-        ref={replies}
-        onScroll={() => {
-          const element = replies.current!;
-          atBottom.current = element.scrollHeight - element.scrollTop - element.clientHeight < 60;
-          if (atBottom.current) void markRead();
-        }}
-      >
-        {chat.status !== 'Access unavailable' && (
-          <>
-            <strong>{memberName(root.author_user_id, user)}</strong>
-            <p className="message-body">
-              {root.deleted_at ? 'This message was deleted.' : root.body}
-            </p>
-            <MessageAttachments message={root} />
-          </>
-        )}
-        <hr />
-        <Alert>{chat.error || error}</Alert>
-        {chat.next && (
-          <button
-            disabled={chat.paging}
-            onClick={async () => {
-              const element = replies.current;
-              const height = element?.scrollHeight || 0;
-              const top = element?.scrollTop || 0;
-              atBottom.current = false;
-              await chat.older();
-              requestAnimationFrame(() => {
-                if (element) element.scrollTop = top + element.scrollHeight - height;
-              });
-            }}
-          >
-            Load older replies
-          </button>
-        )}
-        {chat.loading ? (
-          <Loading label="Loading replies…" />
-        ) : (
-          !chat.messages.length && <p className="muted">Be the first to reply.</p>
-        )}
-        {chat.messages.map((m) => (
-          <article key={m.id} className="thread-reply">
-            <strong>{memberName(m.author_user_id, user)}</strong>
-            <small> · {new Date(m.created_at).toLocaleString()}</small>
-            <p className="message-body">{m.deleted_at ? 'This message was deleted.' : m.body}</p>
-            <MessageAttachments message={m} />
-            <Reactions
-              message={m}
-              user={user}
-              path={chat.path}
-              disabled={!!channel.archived_at}
-              changed={(m) => chat.merge([m])}
-            />
-            {m.author_user_id === user.id && !m.deleted_at && (
-              <div className="button-row">
-                {!channel.archived_at && <button onClick={() => setEditing(m)}>Edit reply</button>}
-                <button onClick={() => setDeleting(m)}>Delete reply</button>
-              </div>
-            )}
-          </article>
-        ))}
-      </div>
-      {!channel.archived_at && chat.status !== 'Access unavailable' && (
-        <Composer
-          user={user}
-          channel={channel}
-          path={chat.path}
-          parent={root.id}
-          sent={(m) => chat.merge([m])}
-        />
-      )}
-      {(editing || deleting) && (
-        <Modal
-          title={editing ? 'Edit reply' : 'Delete reply?'}
-          close={() => {
-            setEditing(null);
-            setDeleting(null);
-          }}
-        >
-          <form
-            className="form-stack"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setBusy(true);
-              setError('');
-              try {
-                if (editing)
-                  chat.merge([
-                    await api<Message>(`${chat.path}/${editing.id}`, 'PATCH', {
-                      body: new FormData(e.currentTarget).get('body'),
-                    }),
-                  ]);
-                else if (deleting) {
-                  await api(`${chat.path}/${deleting.id}`, 'DELETE');
-                  chat.merge([
-                    {
-                      ...deleting,
-                      body: null,
-                      deleted_at: new Date().toISOString(),
-                      revision: deleting.revision + 1,
-                    },
-                  ]);
-                }
-                setEditing(null);
-                setDeleting(null);
-              } catch (failure) {
-                setError(errorMessage(failure));
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <Alert>{error}</Alert>
-            {editing ? (
-              <textarea
-                name="body"
-                required={!editing.attachments?.length}
-                maxLength={4000}
-                defaultValue={editing.body || ''}
-              />
-            ) : (
-              <p>This permanently removes the reply’s content.</p>
-            )}
-            <button className="primary" disabled={busy}>
-              {busy ? 'Saving…' : editing ? 'Save reply' : 'Delete reply'}
-            </button>
-          </form>
-        </Modal>
-      )}
-    </aside>
   );
 }

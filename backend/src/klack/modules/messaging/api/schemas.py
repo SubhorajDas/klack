@@ -26,7 +26,7 @@ class CreateMessageRequest(StrictRequest):
     body: str = Field(default="", max_length=4_000)
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=5)
     client_message_id: UUID | None = None
-    parent_message_id: UUID | None = None
+    reply_to_message_id: UUID | None = None
 
     @model_validator(mode="after")
     def require_content(self) -> Self:
@@ -43,6 +43,18 @@ class UpdateMessageRequest(StrictRequest):
     body: str = Field(max_length=4_000)
 
 
+class QuoteResponse(BaseModel):
+    """A bounded preview with no recursive quoted content."""
+
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    author_user_id: UUID
+    body: str | None
+    deleted_at: datetime | None
+    revision: int
+    attachment_count: int
+
+
 class MessageResponse(BaseModel):
     """A live message or a deleted-message tombstone."""
 
@@ -56,9 +68,9 @@ class MessageResponse(BaseModel):
     deleted_at: datetime | None
     client_message_id: UUID | None
     revision: int
-    parent_message_id: UUID | None
+    reply_to_message_id: UUID | None
     reactions: list[tuple[str, UUID]]
-    reply_count: int
+    quote: QuoteResponse | None
     attachments: list[Attachment]
 
     @classmethod
@@ -75,9 +87,11 @@ class MessageResponse(BaseModel):
             deleted_at=message.deleted_at,
             client_message_id=message.client_message_id,
             revision=message.revision,
-            parent_message_id=message.parent_message_id,
+            reply_to_message_id=message.reply_to_message_id,
             reactions=list(message.reactions),
-            reply_count=message.reply_count,
+            quote=QuoteResponse.model_validate(message.quote)
+            if message.quote and not message.is_deleted
+            else None,
         )
 
 

@@ -233,7 +233,9 @@ async def test_active_call_loses_lease_or_access(calls_api, reason):
         user = await db.get(UserRecord, B)
         user.disabled_at = datetime.now(UTC)
     else:
-        await db.execute(delete(MembershipRecord).where(MembershipRecord.user_id == B))
+        await db.execute(
+            delete(ChannelMembershipRecord).where(ChannelMembershipRecord.user_id == B)
+        )
     await db.commit()
     switch(A)
     assert not (await client.get(f"/api/v1/calls?device_id={DEVICE_A}")).json()["calls"]
@@ -254,7 +256,7 @@ async def test_outsider_and_cross_workspace_are_rejected(calls_api):
     assert (await start(client, workspace_id=str(uuid4()))).status_code == 404
     assert (await act(client, str(uuid4()), "end")).status_code == 404
     await act(client, cid, "end", DEVICE_A)
-    await db.execute(delete(MembershipRecord).where(MembershipRecord.user_id == B))
+    await db.execute(delete(ChannelMembershipRecord).where(ChannelMembershipRecord.user_id == B))
     await db.commit()
     assert (await start(client)).status_code == 409
 

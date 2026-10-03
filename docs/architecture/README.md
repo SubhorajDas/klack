@@ -50,7 +50,7 @@ and repositories control transaction completion. Alembic alone changes the schem
 | [Identity](../../backend/src/klack/modules/identity) | Passwords, sessions, refresh rotation, email actions, throttles | Users, credentials, sessions, refresh tokens, action tokens, outbox, throttle buckets |
 | [Workspaces](../../backend/src/klack/modules/workspaces) | Tenant membership, roles, ownership, invitations | Workspaces, memberships, invitation digests |
 | [Channels](../../backend/src/klack/modules/channels) | Discovery, explicit membership, visibility, archival | Channels and channel memberships |
-| [Messaging](../../backend/src/klack/modules/messaging) | History, sends, edits, deletion, threads, reactions, read positions, DM workflows | Messages, reactions, read cursors; coordinates direct-conversation channel state |
+| [Messaging](../../backend/src/klack/modules/messaging) | History, sends, edits, deletion, quoted replies, reactions, read positions, DM workflows | Messages, reactions, read cursors; coordinates direct-conversation channel state |
 | [Realtime](../../backend/src/klack/modules/realtime) | Committed event fanout and authenticated subscriptions | Body-free event rows; sockets and queues remain process-local |
 | [Calling](../../backend/src/klack/modules/calling) | Private voice authorization, call transitions, participant reservations, room cleanup | Calls and exclusive participant seats |
 
@@ -90,12 +90,12 @@ erDiagram
 
 - JWTs identify a user/session; durable session and membership checks determine current access.
   Role changes and removals do not wait for JWT renewal.
-- Channel membership is contained within workspace membership. Public discovery does not grant
+- Workspace-channel membership is contained within workspace membership; DM participation belongs to identities. Public discovery does not grant
   content access. Governance access to private channel metadata does not grant message access.
-- Direct conversations reuse channel-backed messages but hide from channel discovery and prevent
+- Direct conversations have a globally unique participant pair, reuse channel-backed messages, and hide from channel discovery and prevent
   administrators from joining, changing participants, or converting them to public channels.
 - Threads are one level deep. Replies point to a root in the same channel; deleting a root leaves
-  its thread addressable. Deleted message bodies are erased while tombstones preserve ordering.
+  its quoted replies addressable. Deleted message bodies are erased while tombstones preserve ordering.
 - Read cursors belong to a user and conversation, advance monotonically by `(created_at, id)`, and
   are private positions rather than shared read receipts.
 - Workspace row locks serialize sensitive membership operations; refresh rotation, read updates,
@@ -194,16 +194,16 @@ See [ADR 0009](../adr/0009-private-voice-calls.md).
 | [`components/workspace-app.tsx`](../../frontend/src/components/workspace-app.tsx) | Workspace navigation, selection, and unread refresh |
 | [`lib/api.ts`](../../frontend/src/lib/api.ts) | HTTP transport, CSRF, and session recovery |
 | [`lib/use-conversation.ts`](../../frontend/src/lib/use-conversation.ts) | Conversation history, pagination, subscription, and reconnects |
-| [`components/conversation.tsx`](../../frontend/src/components/conversation.tsx) | Composer, tab-local drafts, retry-safe sends, and thread UI |
+| [`components/conversation.tsx`](../../frontend/src/components/conversation.tsx) | Composer, tab-local drafts, retry-safe sends, and quoted-reply UI |
 | [`lib/messages.ts`](../../frontend/src/lib/messages.ts) | Message merging by ID/revision and stable ordering |
 | [`components/calls.tsx`](../../frontend/src/components/calls.tsx) | Inbox polling, call UI, media, and heartbeat cleanup |
 
 Server records remain authoritative. Tab-local drafts and uncertain sends survive reloads and are
-scoped by user/workspace/channel/thread. Authentication credentials never enter browser storage.
+scoped by user/workspace/channel. Authentication credentials never enter browser storage.
 Unread counts refresh periodically and on relevant local events; they are not presence signals.
 
 The Alerts inbox reads `/workspaces/{id}/alerts` from the messaging module. A membership-filtered
-query groups unread messages (including thread replies) by conversation, returning the latest
+query groups unread messages (including quoted replies) by conversation, returning the latest
 preview and count for each. It reuses persistent read cursors rather than storing duplicate
 notifications. Marking an alert read advances only through the displayed message so later arrivals
 remain unread. The inbox refreshes every 15 seconds while visible and on observed local events.

@@ -8,6 +8,29 @@ from klack.modules.files.domain import Attachment
 
 
 @dataclass(frozen=True, slots=True)
+class MessageQuote:
+    """Current, shallow preview of a referenced message; never a copied body."""
+
+    id: UUID
+    author_user_id: UUID
+    body: str | None
+    deleted_at: datetime | None
+    revision: int
+    attachment_count: int = 0
+
+    @classmethod
+    def from_message(cls, message: "Message") -> "MessageQuote":
+        return cls(
+            id=message.id,
+            author_user_id=message.author_user_id,
+            body=None if message.is_deleted else (message.body or "")[:240],
+            deleted_at=message.deleted_at,
+            revision=message.revision,
+            attachment_count=0 if message.is_deleted else len(message.attachments),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class Message:
     """One durable message in a workspace channel."""
 
@@ -21,9 +44,9 @@ class Message:
     deleted_at: datetime | None
     client_message_id: UUID | None = None
     revision: int = 1
-    parent_message_id: UUID | None = None
+    reply_to_message_id: UUID | None = None
     reactions: tuple[tuple[str, UUID], ...] = ()
-    reply_count: int = 0
+    quote: MessageQuote | None = None
     attachments: tuple[Attachment, ...] = ()
 
     @property

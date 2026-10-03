@@ -6,10 +6,9 @@ import { getBrowserApiCache } from './api-cache';
 import { useCachedData } from './use-cached-data';
 import { channelPath, type Message, type MessagePage, type User } from './types';
 
-export function useConversation(workspace: string, channel: string, parent?: string) {
+export function useConversation(workspace: string, channel: string) {
   const path = `${channelPath(workspace, channel)}/messages`;
-  const query = parent ? `&parent_message_id=${parent}` : '';
-  const cacheKey = `conversation:${path}${parent ? `?parent=${parent}` : ''}`;
+  const cacheKey = `conversation:quotes-v1:${path}`;
   const preview = useCachedData<MessagePage>(cacheKey);
   const cache = getBrowserApiCache();
   const cacheSession = useRef(cache?.session());
@@ -19,14 +18,23 @@ export function useConversation(workspace: string, channel: string, parent?: str
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [paging, setPaging] = useState(false);
+  const [browsingHistory, setBrowsingHistory] = useState(false);
+  const historyAnchor = useRef<string | null>(null);
   const buffer = useRef<Message[]>([]);
   const syncing = useRef(true);
   const alive = useRef(true);
   const readable = useRef(true);
   const historyEpoch = useRef(0);
+  const navigating = useRef(false);
 
   useEffect(() => {
-    if (!loading && readable.current && alive.current && cacheSession.current !== undefined) {
+    if (
+      !loading &&
+      !browsingHistory &&
+      readable.current &&
+      alive.current &&
+      cacheSession.current !== undefined
+    ) {
       // Only keep the newest page as a navigation preview. Every visit still
       // fetches an authoritative snapshot and subscribes to live revisions.
       cache?.write(
@@ -35,13 +43,17 @@ export function useConversation(workspace: string, channel: string, parent?: str
         cacheSession.current,
       );
     }
-  }, [cache, cacheKey, loading, messages, next]);
+  }, [cache, cacheKey, loading, messages, next, browsingHistory]);
 
   function merge(incoming: Message[]) {
     if (!alive.current || !readable.current) return;
-    incoming = incoming.filter((m) => (m.parent_message_id || undefined) === parent);
     if (syncing.current) buffer.current.push(...incoming);
-    setMessages((current) => mergeMessages(current, incoming));
+    setMessages((current) => {
+      const merged = mergeMessages(current, incoming);
+      return historyAnchor.current
+        ? merged.filter((m) => current.some((old) => old.id === m.id))
+        : merged;
+    });
   }
 
   useEffect(() => {
@@ -63,14 +75,24 @@ export function useConversation(workspace: string, channel: string, parent?: str
     async function snapshot(version: number, live: boolean) {
       const sequence = ++snapshotSequence;
       try {
-        const page = await api<MessagePage>(`${path}?limit=50${query}`);
+        const anchor = historyAnchor.current;
+        const page = await api<MessagePage>(`${path}?limit=50${anchor ? `&around=${anchor}` : ''}`);
         if (stopped || (live && version !== generation) || sequence !== snapshotSequence || denied)
           return;
-        historyEpoch.current++;
-        setMessages(mergeMessages(page.messages, buffer.current));
+        const buffered = buffer.current;
+        // A reconnect snapshot must not replace a quote navigation in flight.
+        if (!navigating.current && anchor === historyAnchor.current) {
+          historyEpoch.current++;
+          setMessages(() => {
+            const merged = mergeMessages(page.messages, buffered);
+            return anchor
+              ? merged.filter((m) => page.messages.some((row) => row.id === m.id))
+              : merged;
+          });
+          setNext(page.next_before);
+        }
         buffer.current = [];
         syncing.current = !live;
-        setNext(page.next_before);
         setError('');
         setLoading(false);
         if (live) {
@@ -91,6 +113,10 @@ export function useConversation(workspace: string, channel: string, parent?: str
       cache?.remove(cacheKey);
       historyEpoch.current++;
       setMessages([]);
+      historyAnchor.current = null;
+      setBrowsingHistory(false);
+      navigating.current = false;
+      setPaging(false);
       setNext(null);
       setLoading(false);
       setStatus('Access unavailable');
@@ -173,22 +199,49 @@ export function useConversation(workspace: string, channel: string, parent?: str
     };
     // The parent keys each conversation by channel, so state cannot cross channels.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, workspace, channel, parent, query]);
+  }, [path, workspace, channel]);
 
   async function older() {
     if (!next || paging || !readable.current) return;
     const epoch = historyEpoch.current;
     setPaging(true);
     try {
-      const page = await api<MessagePage>(`${path}?before=${next}${query}`);
+      const page = await api<MessagePage>(`${path}?before=${next}`);
       if (alive.current && readable.current && epoch === historyEpoch.current) {
-        merge(page.messages);
+        setMessages((current) => mergeMessages(current, page.messages));
         setNext(page.next_before);
       }
     } catch (failure) {
       if (alive.current) setError(errorMessage(failure));
     } finally {
       if (alive.current) setPaging(false);
+    }
+  }
+  async function navigate(anchor: string | null) {
+    if (!readable.current) return false;
+    const epoch = ++historyEpoch.current;
+    navigating.current = true;
+    setPaging(true);
+    try {
+      const page = await api<MessagePage>(`${path}?limit=50${anchor ? `&around=${anchor}` : ''}`);
+      if (!alive.current || !readable.current || epoch !== historyEpoch.current) return false;
+      historyAnchor.current = anchor;
+      setBrowsingHistory(!!anchor);
+      setMessages((current) => {
+        const merged = mergeMessages(current, page.messages);
+        return merged.filter((m) => page.messages.some((row) => row.id === m.id));
+      });
+      setNext(page.next_before);
+      setError('');
+      return true;
+    } catch (failure) {
+      if (alive.current && epoch === historyEpoch.current) setError(errorMessage(failure));
+      return false;
+    } finally {
+      if (epoch === historyEpoch.current) {
+        navigating.current = false;
+        if (alive.current) setPaging(false);
+      }
     }
   }
   return {
@@ -201,5 +254,8 @@ export function useConversation(workspace: string, channel: string, parent?: str
     older,
     merge,
     path,
+    browsingHistory,
+    jump: (id: string) => navigate(id),
+    latest: () => navigate(null),
   };
 }

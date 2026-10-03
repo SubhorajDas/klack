@@ -2,6 +2,197 @@ import { test, expect, type Page } from '@playwright/test';
 const wid = '11111111-1111-4111-8111-111111111111';
 const cid = '22222222-2222-4222-8222-222222222222';
 const channelUrl = `/w/${wid}/channel/${cid}`;
+test('global badges include other workspaces and clear together when alerts are read', async ({
+  page,
+}) => {
+  const otherWorkspace = '55555555-5555-4555-8555-555555555555';
+  const otherChannel = '66666666-6666-4666-8666-666666666666';
+  const direct = '77777777-7777-4777-8777-777777777777';
+  const counts: {
+    total: number;
+    direct_messages: number;
+    workspaces: Record<string, number>;
+    channels: Record<string, number>;
+  } = {
+    total: 6,
+    direct_messages: 3,
+    workspaces: { [wid]: 1, [otherWorkspace]: 2 },
+    channels: { [cid]: 1, [otherChannel]: 2, [direct]: 3 },
+  };
+  await page.route('**/api/v1/workspaces', async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        workspaces: [
+          ...data.workspaces,
+          { id: otherWorkspace, name: 'Other workspace', created_at: '2026-10-04T00:00:00Z' },
+        ],
+      },
+    });
+  });
+  await page.route('**/api/v1/unread-counts', (route) => route.fulfill({ json: counts }));
+  const alerts = [
+    {
+      channel: {
+        id: otherChannel,
+        workspace_id: otherWorkspace,
+        name: 'remote-updates',
+        visibility: 'public',
+        is_member: true,
+        archived_at: null,
+      },
+      message: {
+        id: 'remote-message',
+        author_user_id: 'peer',
+        body: 'An update from another workspace',
+        created_at: '2026-10-04T00:00:00Z',
+      },
+      unread_count: 2,
+    },
+    {
+      channel: {
+        id: direct,
+        workspace_id: otherWorkspace,
+        name: 'private',
+        visibility: 'private',
+        direct_key: '33333333333343338333333333333333:44444444444444448444444444444444',
+        is_member: true,
+        archived_at: null,
+      },
+      message: {
+        id: 'direct-message',
+        author_user_id: 'peer',
+        body: 'A personal update',
+        created_at: '2026-10-04T00:00:00Z',
+      },
+      unread_count: 3,
+    },
+  ];
+  await page.route('**/api/v1/alerts', (route) => route.fulfill({ json: { alerts } }));
+  const marked: string[] = [];
+  await page.route('**/read-cursor', async (route) => {
+    if (route.request().method() !== 'PUT') return route.continue();
+    const channel = route.request().url().split('/channels/')[1].split('/')[0];
+    marked.push(channel);
+    counts.total -= counts.channels[channel];
+    counts.channels[channel] = 0;
+    if (channel === direct) counts.direct_messages = 0;
+    else counts.workspaces[otherWorkspace] = 0;
+    await route.fulfill({ json: { unread_count: 0 } });
+  });
+  await login(page);
+  const badge = (name: string) =>
+    page.getByRole('button', { name, exact: true }).locator('.unread-badge');
+  await expect(badge('Direct messages')).toHaveText('3');
+  await expect(badge('Alerts')).toHaveText('6');
+  await expect(badge('Design team')).toHaveText('1');
+  await expect(badge('Other workspace')).toHaveText('2');
+  await expect(
+    page.locator('.channel-link').filter({ hasText: 'product-design' }).locator('.unread-badge'),
+  ).toHaveText('1');
+  await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+  await expect(page).toHaveURL(/\/activity$/);
+  await expect(page.getByRole('list', { name: 'Unread conversations' })).toContainText(
+    'Other workspace',
+  );
+  await page.getByRole('button', { name: 'Mark shown as read', exact: true }).click();
+  await expect(badge('Direct messages')).toHaveCount(0);
+  await expect(badge('Other workspace')).toHaveCount(0);
+  await expect(badge('Alerts')).toHaveText('1');
+  expect(marked.sort()).toEqual([otherChannel, direct].sort());
+  await page.screenshot({ path: 'test-results/global-unread-desktop.png' });
+});
+test('workspace rail switches directly and plus only offers create and join', async ({
+  page,
+  request,
+}) => {
+  await request.post('http://127.0.0.1:8100/__mode', { data: { mode: 'leave-another' } });
+  await login(page);
+  const workspaces = page.getByRole('group', { name: 'Workspaces', exact: true });
+  await expect(workspaces.getByRole('button')).toHaveCount(2);
+  await expect(
+    workspaces.getByRole('button', { name: 'Design team', exact: true }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await workspaces.getByRole('button', { name: 'Other team', exact: true }).click();
+  await expect(page).toHaveURL(/other-workspace\/home$/);
+  await expect(page.locator('.workspace-heading')).toHaveText('Other team');
+  await expect(workspaces.getByRole('button', { name: 'Other team', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.setViewportSize({ width: 390, height: 600 });
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await workspaces.getByRole('button', { name: 'Design team', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/w/${wid}/home$`));
+  await expect(page.locator('.sidebar')).not.toBeInViewport();
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: 'Add workspace', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Add a workspace', exact: true });
+  await expect(
+    dialog.getByRole('button', { name: 'Create a workspace', exact: true }),
+  ).toBeVisible();
+  await expect(
+    dialog.getByRole('button', { name: 'Join with an invite', exact: true }),
+  ).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Leave workspace', exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Sign out', exact: true })).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Join with an invite', exact: true }).click();
+  await expect(page.getByLabel('Invitation link or token')).toBeVisible();
+});
+test('channel sidebar fits seven channels on desktop and mobile', async ({ page }) => {
+  await page.route('**/api/v1/workspaces/*/channels?include_archived=true', async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        channels: Array.from({ length: 7 }, (_, index) => ({
+          ...data.channels[0],
+          id: index === 0 ? cid : `sidebar-channel-${index}`,
+          name: [
+            'product-design',
+            'general',
+            'engineering',
+            'announcements',
+            'team-updates',
+            'ideas',
+            'random',
+          ][index],
+          is_member: true,
+        })),
+      },
+    });
+  });
+  await page.setViewportSize({ width: 1440, height: 760 });
+  await login(page);
+  const sidebar = page.locator('.sidebar');
+  const list = sidebar.locator('.channel-list');
+  await expect(list.locator('.channel-link:not(.subtle)')).toHaveCount(7);
+  for (const name of ['Saved', 'People', 'Settings']) {
+    await expect(sidebar.getByRole('button', { name, exact: true })).toHaveCount(0);
+  }
+  expect(await list.evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
+  await page.screenshot({ path: 'test-results/sidebar-desktop.png' });
+  await page.getByRole('button', { name: 'Direct messages', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Direct messages', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'People', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'People', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Alerts', exact: true }).click();
+  await expect(page.getByRole('heading', { name: /^Alerts/ })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 600 });
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await expect(sidebar).toHaveCSS('transform', 'matrix(1, 0, 0, 1, 0, 0)');
+  await expect(list.getByRole('button', { name: 'random', exact: true })).toBeInViewport();
+  expect(await list.evaluate((element) => element.scrollHeight <= element.clientHeight)).toBe(true);
+  await page.screenshot({ path: 'test-results/sidebar-mobile.png' });
+  await sidebar.getByRole('button', { name: 'Home', exact: true }).click();
+  await expect(sidebar).not.toBeInViewport();
+  await expect(page.getByRole('button', { name: 'Alerts', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'People', exact: true })).toBeVisible();
+});
 async function login(page: Page) {
   await page.goto('/login');
   await page.getByLabel('Work email').fill('maya@design.team');
@@ -79,24 +270,25 @@ test('uploads retry individually, reject too many files, and can be removed', as
   await expect(page.getByLabel('Attachments to send')).toHaveCount(0);
 });
 
-test('files can be sent in threads and private DMs on mobile', async ({ page }) => {
+test('files can be sent as quoted replies and in private DMs on mobile', async ({ page }) => {
   await login(page);
   await openChannel(page);
+  await page.locator('article.message').first().hover();
   await page
     .locator('article.message')
     .first()
-    .getByRole('button', { name: 'Reply in thread' })
+    .getByRole('button', { name: 'Reply', exact: true })
     .click();
-  const panel = page.locator('.thread-panel');
-  await expect(panel.getByRole('button', { name: 'Attach files' })).toBeEnabled();
-  await panel
+  await expect(page.getByLabel('Replying to message')).toBeVisible();
+  await page
     .getByLabel('Choose attachments')
-    .setInputFiles({ name: 'thread.txt', mimeType: 'text/plain', buffer: Buffer.from('reply') });
-  await expect(panel.getByLabel('Attachments to send')).toContainText('Ready');
-  await panel.getByRole('button', { name: 'Send message', exact: true }).click();
-  await expect(panel.getByRole('log')).toContainText('thread.txt');
-  await expect(page.locator('.message-list')).not.toContainText('thread.txt');
-  await panel.getByRole('button', { name: 'Close thread' }).click();
+    .setInputFiles({ name: 'reply.txt', mimeType: 'text/plain', buffer: Buffer.from('reply') });
+  await expect(page.getByLabel('Attachments to send')).toContainText('Ready');
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(
+    page.locator('article.message').filter({ hasText: 'reply.txt' }).locator('.message-quote'),
+  ).toContainText('onboarding flow');
+  await expect(page.getByLabel('Replying to message')).toHaveCount(0);
   await page.getByRole('button', { name: 'Direct messages', exact: true }).click();
   await page.getByRole('button', { name: 'New direct message' }).click();
   await page.getByLabel('Start a conversation').selectOption('alex-123');
@@ -282,7 +474,9 @@ test('an invitation survives the create-account flow without entering a query st
   expect(page.url()).not.toContain('fixture-invite');
 });
 
-test('threads, reactions, and direct messages work through the browser', async ({ page }) => {
+test('quoted replies, reactions, and direct messages work through the browser', async ({
+  page,
+}) => {
   await login(page);
   await openChannel(page);
   await expect(page.locator('article.message').filter({ hasText: 'alex' }).first()).toBeVisible();
@@ -293,26 +487,47 @@ test('threads, reactions, and direct messages work through the browser', async (
     'aria-pressed',
     'true',
   );
-  await first.getByRole('button', { name: 'Reply in thread' }).click();
-  const panel = page.locator('.thread-panel');
-  await panel.getByRole('textbox').fill('A focused thread reply');
-  await panel.getByRole('textbox').press('Enter');
-  await expect(panel.getByRole('log')).toContainText('A focused thread reply');
-  await expect(page.locator('.message-list')).not.toContainText('A focused thread reply');
-  await expect(first.getByRole('button', { name: '1 reply' })).toBeVisible();
-  await page.screenshot({ path: 'test-results/thread-desktop.png', fullPage: true });
-  await panel.getByRole('button', { name: 'Edit reply', exact: true }).click();
+  await page.locator('.composer textarea').fill('Keep this draft');
+  await first.hover();
+  await first.getByRole('button', { name: 'Reply', exact: true }).click();
+  await expect(page.locator('.composer textarea')).toHaveValue('Keep this draft');
+  await page.getByRole('button', { name: 'Cancel reply' }).click();
+  await expect(page.locator('.composer textarea')).toHaveValue('Keep this draft');
+  await first.hover();
+  await first.getByRole('button', { name: 'Reply', exact: true }).click();
+  await page.locator('.composer textarea').fill('A focused quoted reply');
+  await page.locator('.composer textarea').press('Enter');
+  const reply = page
+    .locator('article.message')
+    .filter({ has: page.locator('p', { hasText: 'A focused quoted reply' }) });
+  await expect(reply.locator('.message-quote')).toContainText('onboarding flow');
+  await reply.getByRole('button', { name: 'View original message' }).click();
+  await expect(first).toHaveClass(/message-highlight/);
+  await reply.getByRole('button', { name: 'Edit message', exact: true }).click();
   await page.getByRole('dialog').getByRole('textbox').fill('Updated reply');
-  await page.getByRole('button', { name: 'Save reply' }).click();
-  await expect(panel.getByRole('log')).toContainText('Updated reply');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(reply).toHaveCount(0);
+  const editedReply = page
+    .locator('article.message')
+    .filter({ has: page.locator('p', { hasText: 'Updated reply' }) });
+  await editedReply.hover();
+  await editedReply.getByRole('button', { name: 'Reply', exact: true }).click();
+  await page.locator('.composer textarea').fill('Replying to a reply');
+  await page.locator('.composer textarea').press('Enter');
+  await expect(
+    page
+      .locator('article.message')
+      .filter({ has: page.locator('p', { hasText: 'Replying to a reply' }) })
+      .locator('.message-quote'),
+  ).toContainText('Updated reply');
+  await page.screenshot({ path: 'test-results/quoted-reply-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(panel.getByRole('textbox')).toBeVisible();
+  await expect(page.locator('.composer textarea')).toBeVisible();
   await page.screenshot({
-    path: 'test-results/thread-mobile.png',
+    path: 'test-results/quoted-reply-mobile.png',
     fullPage: true,
     animations: 'disabled',
   });
-  await panel.getByRole('button', { name: 'Close thread' }).click();
   await page.setViewportSize({ width: 1440, height: 960 });
   await page.getByRole('button', { name: 'Direct messages', exact: true }).click();
   await page.getByRole('button', { name: 'New direct message' }).click();
@@ -337,7 +552,52 @@ test('threads, reactions, and direct messages work through the browser', async (
   await expect(page.getByRole('heading', { name: 'Direct messages' })).toBeVisible();
 });
 
-test('unread cursors persist and thread history paginates without entering the channel feed', async ({
+test('quoted drafts survive reload, retries keep their quote, and deletion redacts previews', async ({
+  page,
+  request,
+}) => {
+  await login(page);
+  await openChannel(page);
+  const original = page.locator('#message-m1');
+  await original.hover();
+  await original.getByRole('button', { name: 'Reply', exact: true }).click();
+  await page.locator('.composer textarea').fill('Saved quoted draft');
+  await page.reload();
+  await expect(page.locator('.composer textarea')).toHaveValue('Saved quoted draft');
+  await expect(page.getByLabel('Replying to message')).toContainText('onboarding flow');
+  await request.post('http://127.0.0.1:8100/__mode', { data: { mode: 'fail-once' } });
+  await page.locator('.composer textarea').press('Enter');
+  await expect(page.locator('.send-error')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Cancel reply' })).toBeDisabled();
+  await page.reload();
+  await expect(page.getByLabel('Replying to message')).toBeVisible();
+  await page.getByRole('button', { name: 'Retry send', exact: true }).first().click();
+  await expect(page.getByLabel('Replying to message')).toHaveCount(0);
+  const reply = page
+    .locator('article.message')
+    .filter({ has: page.locator('p', { hasText: 'Saved quoted draft' }) });
+  await expect(reply).toHaveCount(1);
+  const stats = await (await request.get('http://127.0.0.1:8100/__stats')).json();
+  expect(stats.writes[0].reply_to_message_id).toBe('m1');
+  expect(stats.writes[1]).toEqual(stats.writes[0]);
+  await original.hover();
+  await original.getByRole('button', { name: 'Edit message', exact: true }).click();
+  await page.getByRole('dialog').getByRole('textbox').fill('Updated original context');
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(reply.locator('.message-quote')).toContainText('Updated original context');
+  await original.hover();
+  await original.getByRole('button', { name: 'Delete message', exact: true }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Delete message', exact: true })
+    .click();
+  await expect(reply.locator('.message-quote')).toContainText('Message deleted');
+  await expect(reply.locator('.message-quote')).not.toContainText('Updated original context');
+  await page.reload();
+  await expect(reply.locator('.message-quote')).toContainText('Message deleted');
+});
+
+test('existing replies appear inline and quotes load older originals', async ({
   page,
   request,
 }) => {
@@ -350,14 +610,24 @@ test('unread cursors persist and thread history paginates without entering the c
   await page.reload();
   await expect(page.getByText('Connected', { exact: true })).toBeVisible();
   await expect(channelButton.getByLabel('2 unread messages')).toHaveCount(0);
-  await request.post('http://127.0.0.1:8100/__mode', { data: { mode: 'paged-thread' } });
+  await request.post('http://127.0.0.1:8100/__mode', { data: { mode: 'paged-replies' } });
   await page.reload();
-  await page.locator('article.message').first().getByRole('button', { name: '55 replies' }).click();
-  const panel = page.locator('.thread-panel');
-  await expect(panel.locator('.thread-reply')).toHaveCount(50);
-  await panel.getByRole('button', { name: 'Load older replies' }).click();
-  await expect(panel.locator('.thread-reply')).toHaveCount(55);
-  await expect(page.locator('.message-list')).not.toContainText('Thread history');
+  await expect(page.locator('article.message')).toHaveCount(50);
+  await expect(page.locator('article.message').first().locator('.message-quote')).toContainText(
+    'onboarding flow',
+  );
+  await page
+    .locator('article.message')
+    .first()
+    .getByRole('button', { name: 'View original message' })
+    .click();
+  await expect(page.locator('#message-m1')).toHaveClass(/message-highlight/);
+  await expect(page.getByRole('button', { name: 'Back to latest' })).toBeVisible();
+  await page.getByRole('button', { name: 'Back to latest' }).click();
+  await expect(page.locator('article.message')).toHaveCount(50);
+  await page.getByRole('button', { name: 'Load older messages' }).click();
+  await expect(page.locator('article.message')).toHaveCount(59);
+  await expect(page.locator('.message-list')).toContainText('Reply history');
 });
 
 for (const action of ['create', 'join'] as const) {
@@ -375,13 +645,7 @@ for (const action of ['create', 'join'] as const) {
     await page.getByLabel('Password', { exact: true }).fill('correct-horse-battery');
     await page.getByRole('button', { name: 'Sign in', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Your team starts here, maya' })).toBeVisible();
-    for (const name of [
-      'Direct messages',
-      'Browse channels',
-      'People',
-      'Settings',
-      'Add channels',
-    ]) {
+    for (const name of ['Browse channels', 'People', 'Settings', 'Add channels']) {
       await expect(page.locator('.sidebar').getByRole('button', { name, exact: true })).toHaveCount(
         0,
       );
@@ -432,11 +696,7 @@ for (const mode of ['leave-only', 'leave-another', 'last-owner']) {
     expect(
       stats.writes.filter((entry: { path: string }) => entry.path.endsWith('/leave')),
     ).toHaveLength(0);
-    await page.locator('.workspace-switch').click();
-    await page
-      .getByRole('dialog')
-      .getByRole('button', { name: 'Leave workspace', exact: true })
-      .click();
+    await page.getByRole('button', { name: 'Leave workspace', exact: true }).click();
     await dialog.getByRole('button', { name: 'Leave workspace', exact: true }).click();
     if (mode === 'last-owner') {
       await expect(dialog.getByRole('alert')).toContainText('Make another member an owner');
@@ -455,7 +715,7 @@ for (const mode of ['leave-only', 'leave-another', 'last-owner']) {
       ).toBeVisible();
     } else {
       await expect(page).toHaveURL(/other-workspace\/home$/);
-      await expect(page.locator('.workspace-switch')).toContainText('Other team');
+      await expect(page.locator('.workspace-heading')).toContainText('Other team');
     }
     await page.getByRole('button', { name: 'Account settings', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Settings', exact: true })).toBeVisible();
@@ -497,7 +757,7 @@ test('alerts keep unread items on failed mark and offer retry after load failure
   page,
 }) => {
   await login(page);
-  await page.route('**/api/v1/workspaces/*/alerts', (route) =>
+  await page.route('**/api/v1/alerts', (route) =>
     route.fulfill({
       status: 503,
       contentType: 'application/json',
@@ -507,7 +767,7 @@ test('alerts keep unread items on failed mark and offer retry after load failure
   await page.getByRole('button', { name: 'Alerts', exact: true }).click();
   await expect(page.getByText('Alerts unavailable')).toBeVisible();
   await expect(page.getByText('You’re all caught up')).toHaveCount(0);
-  await page.unroute('**/api/v1/workspaces/*/alerts');
+  await page.unroute('**/api/v1/alerts');
   await page.getByRole('button', { name: 'Retry', exact: true }).click();
   const inbox = page.getByRole('list', { name: 'Unread conversations' });
   await expect(inbox).toBeVisible();

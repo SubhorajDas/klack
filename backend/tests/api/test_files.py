@@ -264,7 +264,7 @@ async def test_image_preview_thread_and_files_pagination(files: Harness):
     ).json()
     reply = await files.client.post(
         BASE + "/messages",
-        json={"parent_message_id": root["id"], "attachment_ids": [attachment["id"]]},
+        json={"reply_to_message_id": root["id"], "attachment_ids": [attachment["id"]]},
         headers=HEADERS,
     )
     assert reply.status_code == 201

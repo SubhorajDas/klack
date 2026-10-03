@@ -3,29 +3,18 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { api, ApiError } from './api';
 import { useCachedApiData } from './use-cached-data';
-import { memberName, workspacePath, type Membership, type User } from './types';
+import { memberName, type Membership, type User } from './types';
 
 const MemberNames = createContext<Membership[]>([]);
 
-export function MemberNamesProvider({
-  workspace,
-  children,
-}: {
-  workspace: string;
-  children: ReactNode;
-}) {
+export function MemberNamesProvider({ children }: { children: ReactNode }) {
   const [members, setMembers] = useState<Membership[]>([]);
-  const cached = useCachedApiData<{ memberships: Membership[] }>(
-    `${workspacePath(workspace)}/memberships`,
-  );
+  const cached = useCachedApiData<{ memberships: Membership[] }>('/contacts');
   useEffect(() => {
-    if (!workspace) return;
     let stopped = false;
     async function refresh() {
       try {
-        const data = await api<{ memberships: Membership[] }>(
-          `${workspacePath(workspace)}/memberships`,
-        );
+        const data = await api<{ memberships: Membership[] }>('/contacts');
         if (!stopped) setMembers(data.memberships);
       } catch (failure) {
         if (!stopped && failure instanceof ApiError && [401, 403, 404].includes(failure.status))
@@ -44,7 +33,7 @@ export function MemberNamesProvider({
       clearInterval(timer);
       document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [workspace]);
+  }, []);
   return (
     <MemberNames.Provider value={cached?.memberships ?? members}>{children}</MemberNames.Provider>
   );

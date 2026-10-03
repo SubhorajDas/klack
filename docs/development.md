@@ -130,6 +130,11 @@ Revision `20260911_0006` adds client message IDs, message revisions, and body-fr
 realtime events.
 Revision `20260925_0007` adds thread relationships, reactions, read cursors, and direct conversation keys.
 Revision `20260925_0008` adds durable call history and exclusive participant seats.
+Revision `20260928_0009` adds private attachments.
+Revision `20261003_0010` renames existing parent references to `reply_to_message_id`.
+The new history includes all existing replies without copying records, changing timestamps,
+or changing IDs. Deploy the migration and the matching API/frontend together; older clients
+use a different reply contract.
 
 ```powershell
 uv run --project backend alembic -c backend/alembic.ini upgrade head

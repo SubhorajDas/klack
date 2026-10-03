@@ -58,17 +58,17 @@ class MessageRecord(Base):
         CheckConstraint("attachment_count BETWEEN 0 AND 5", name="attachment_count_range"),
         UniqueConstraint("channel_id", "id"),
         ForeignKeyConstraint(
-            ["channel_id", "parent_message_id"],
+            ["channel_id", "reply_to_message_id"],
             ["message_messages.channel_id", "message_messages.id"],
         ),
-        Index("ix_message_messages_parent", "parent_message_id", "created_at", "id"),
+        Index("ix_message_messages_reply_to", "reply_to_message_id", "created_at", "id"),
     )
 
     attachment_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
 
-    parent_message_id: Mapped[UUID | None] = mapped_column(Uuid)
+    reply_to_message_id: Mapped[UUID | None] = mapped_column(Uuid)
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     workspace_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)

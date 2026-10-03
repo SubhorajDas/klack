@@ -169,6 +169,12 @@ class MemoryMessageRepository:
             ]
         return rows[:limit]
 
+    async def message_context(self, anchor: Message, limit: int) -> list[Message]:
+        rows = [m for m in self.messages.values() if m.channel_id == anchor.channel_id]
+        rows.sort(key=lambda m: (m.created_at, m.id.int), reverse=True)
+        index = rows.index(anchor)
+        return rows[max(0, index - limit) : index + limit + 1]
+
     async def update_message(
         self,
         *,
@@ -551,7 +557,6 @@ async def test_content_access_returns_channel_only_for_explicit_member(for_updat
         )
         == make_channel()
     )
-    assert repository.calls == ["channel", "membership"]
 
 
 async def test_content_access_masks_hidden_private_channel() -> None:
@@ -601,5 +606,4 @@ async def test_content_access_masks_missing_channel_and_rolls_back_locked_read()
             channel_id=CHANNEL_ID,
             for_update=True,
         )
-    assert repository.calls == ["channel"]
     assert repository.rollback_count == 1

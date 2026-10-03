@@ -16,3 +16,7 @@ the [development](../development.md) and [operations](../operations.md) guides.
 - [0007: Deliver committed message changes over authenticated WebSockets](0007-committed-realtime-message-delivery.md)
 - [0008: Threads, reactions, read positions, and direct conversations](0008-conversation-interactions.md)
 - [0009: Private voice calls with LiveKit](0009-private-voice-calls.md)
+
+- [0010: Inline quoted replies](0010-inline-quoted-replies.md)
+
+- [0011: Personal DMs and account-wide unread counts](0011-personal-direct-messages.md)

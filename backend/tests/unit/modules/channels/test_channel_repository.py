@@ -32,6 +32,7 @@ from klack.modules.workspaces.infrastructure.models import (
     MembershipRecord,
     WorkspaceRecord,
 )
+from klack.modules.workspaces.infrastructure.repository import SqlAlchemyWorkspaceRepository
 
 NOW = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
 OWNER_ID = UUID("11111111-1111-4111-8111-111111111111")
@@ -553,11 +554,9 @@ async def test_workspace_membership_and_workspace_deletes_cascade_channel_state(
     )
     await repository.commit()
 
-    await repository._session.execute(
-        delete(MembershipRecord).where(
-            MembershipRecord.workspace_id == workspace_id,
-            MembershipRecord.user_id == MEMBER_ID,
-        ),
+    await SqlAlchemyWorkspaceRepository(repository._session).remove_membership(
+        workspace_id=workspace_id,
+        user_id=MEMBER_ID,
     )
     await repository.commit()
     assert (

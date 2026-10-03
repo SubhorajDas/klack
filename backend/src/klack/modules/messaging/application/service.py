@@ -13,7 +13,7 @@ from klack.modules.messaging.application.ports import (
     MessageRepository,
     NullMessageEventWriter,
 )
-from klack.modules.messaging.domain.entities import Message
+from klack.modules.messaging.domain.entities import Message, MessageQuote
 from klack.modules.messaging.domain.errors import (
     ClientMessageConflict,
     InvalidMessageBody,
@@ -82,7 +82,7 @@ class MessageService:
         channel_id: UUID,
         body: str,
         client_message_id: UUID | None = None,
-        parent_message_id: UUID | None = None,
+        reply_to_message_id: UUID | None = None,
         attachment_ids: tuple[UUID, ...] = (),
     ) -> Message:
         """Persist a message after locking and rechecking channel membership."""
@@ -96,14 +96,15 @@ class MessageService:
         if channel.is_archived:
             await self._repository.rollback()
             raise ChannelArchived
-        if parent_message_id is not None:
+        parent = None
+        if reply_to_message_id is not None:
             parent = await self._repository.get_message(
                 workspace_id=workspace_id,
                 channel_id=channel_id,
-                message_id=parent_message_id,
+                message_id=reply_to_message_id,
                 for_update=True,
             )
-            if parent is None or parent.parent_message_id is not None:
+            if parent is None:
                 raise MessageNotFound
         if client_message_id is not None:
             existing = await self._repository.get_message_by_client_id(
@@ -115,7 +116,7 @@ class MessageService:
                 await self._repository.rollback()
                 if (
                     existing.body != body
-                    or existing.parent_message_id != parent_message_id
+                    or existing.reply_to_message_id != reply_to_message_id
                     or tuple(a.id for a in existing.attachments) != attachment_ids
                 ):
                     raise ClientMessageConflict
@@ -139,7 +140,8 @@ class MessageService:
             deleted_at=None,
             client_message_id=client_message_id,
             revision=1,
-            parent_message_id=parent_message_id,
+            reply_to_message_id=reply_to_message_id,
+            quote=MessageQuote.from_message(parent) if parent else None,
         )
         if client_message_id is None:
             await self._repository.add_message(message)
@@ -148,7 +150,6 @@ class MessageService:
             if created:
                 if attachment_ids and self._attachments:
                     await self._attachments.attach(attachment_ids, message.id)
-                await self._reply_changed(message)
                 await self._event_writer.append_message_changed(message)
                 await self._repository.commit()
                 return message
@@ -159,7 +160,7 @@ class MessageService:
             )
             if existing is None or (
                 existing.body != body
-                or existing.parent_message_id != parent_message_id
+                or existing.reply_to_message_id != reply_to_message_id
                 or tuple(a.id for a in existing.attachments) != attachment_ids
             ):
                 raise ClientMessageConflict from None
@@ -167,7 +168,6 @@ class MessageService:
             return existing
         if attachment_ids and self._attachments:
             await self._attachments.attach(attachment_ids, message.id)
-        await self._reply_changed(message)
         await self._event_writer.append_message_changed(message)
         await self._repository.commit()
         return message
@@ -180,7 +180,7 @@ class MessageService:
         channel_id: UUID,
         before: UUID | None = None,
         limit: int | None = None,
-        parent_message_id: UUID | None = None,
+        around: UUID | None = None,
     ) -> MessagePage:
         """Return a stable reverse-chronological page of channel history."""
         await self._channel_access.require_access(
@@ -189,15 +189,19 @@ class MessageService:
             channel_id=channel_id,
             for_update=False,
         )
-        if parent_message_id is not None:
-            root = await self._repository.get_message(
-                workspace_id=workspace_id, channel_id=channel_id, message_id=parent_message_id
-            )
-            if root is None or root.parent_message_id is not None:
-                raise MessageNotFound
         page_size = self._policy.default_page_size if limit is None else limit
         if not 1 <= page_size <= self._policy.maximum_page_size:
             raise ValueError("limit is outside the supported page range")
+        if around is not None:
+            if before is not None:
+                raise InvalidMessageCursor
+            anchor = await self._repository.get_message(
+                workspace_id=workspace_id, channel_id=channel_id, message_id=around
+            )
+            if anchor is None:
+                raise MessageNotFound
+            rows = await self._repository.message_context(anchor, max(1, page_size // 2))
+            return MessagePage(messages=rows, next_before=rows[-1].id)
         cursor = None
         if before is not None:
             cursor = await self._repository.get_message(
@@ -205,14 +209,13 @@ class MessageService:
                 channel_id=channel_id,
                 message_id=before,
             )
-            if cursor is None or cursor.parent_message_id != parent_message_id:
+            if cursor is None:
                 raise InvalidMessageCursor
         rows = await self._repository.list_messages(
             channel_id=channel_id,
             before_created_at=None if cursor is None else cursor.created_at,
             before_message_id=None if cursor is None else cursor.id,
             limit=page_size + 1,
-            **({"parent_message_id": parent_message_id} if parent_message_id is not None else {}),
         )
         has_more = len(rows) > page_size
         messages = rows[:page_size]
@@ -329,27 +332,6 @@ class MessageService:
             await self._repository.rollback()
             raise MessagePermissionDenied
         return message
-
-    async def _reply_changed(self, message: Message) -> None:
-        if message.parent_message_id is None:
-            return
-        root = await self._repository.get_message(
-            workspace_id=message.workspace_id,
-            channel_id=message.channel_id,
-            message_id=message.parent_message_id,
-            for_update=True,
-        )
-        if root is None:
-            raise MessageNotFound
-        changed = replace(root, revision=root.revision + 1)
-        await self._repository.update_message(
-            message_id=root.id,
-            body=root.body,
-            edited_at=root.edited_at,
-            deleted_at=root.deleted_at,
-            revision=changed.revision,
-        )
-        await self._event_writer.append_message_changed(changed)
 
     def _validate_body(self, body: str, has_attachments: bool = False) -> None:
         if (not body.strip() and not has_attachments) or len(

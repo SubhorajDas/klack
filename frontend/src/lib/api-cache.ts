@@ -39,6 +39,8 @@ export function isCacheable(path: string) {
   const resource = path.split('?')[0];
   return (
     resource === '/workspaces' ||
+    resource === '/contacts' ||
+    resource === '/direct-messages' ||
     /^\/workspaces\/[^/]+\/(channels|direct-messages|memberships|invitations)$/.test(resource) ||
     /^\/workspaces\/[^/]+\/channels\/[^/]+\/memberships$/.test(resource)
   );
