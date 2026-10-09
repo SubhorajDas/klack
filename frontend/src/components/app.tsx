@@ -7,7 +7,7 @@ import { Auth } from './auth';
 import { WorkspaceApp } from './workspace-app';
 import { CallsProvider } from './calls';
 import { Alert, Loading, Logo } from './ui';
-import { applyTheme, readTheme, themeStorageKey } from '@/lib/themes';
+import { applyTheme, authPaths, readTheme, themeStorageKey } from '@/lib/themes';
 
 export function App() {
   const path = usePathname();
@@ -17,14 +17,18 @@ export function App() {
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const pendingInvite = useRef<string | null>(null);
+  const authRoute = authPaths.includes(path);
+  const authVisible = !user || ['/recover-password', '/verify-email'].includes(path);
   useEffect(() => {
-    applyTheme(readTheme());
+    if (loading && !authRoute) return;
+    const sync = () => applyTheme(authVisible ? 'light' : readTheme());
+    sync();
     const syncTheme = (event: StorageEvent) => {
-      if (event.key === themeStorageKey || event.key === null) applyTheme(readTheme());
+      if (event.key === themeStorageKey || event.key === null) sync();
     };
     window.addEventListener('storage', syncTheme);
     return () => window.removeEventListener('storage', syncTheme);
-  }, []);
+  }, [loading, authRoute, authVisible]);
   useEffect(() => {
     if (path === '/join')
       pendingInvite.current = new URLSearchParams(window.location.hash.slice(1)).get('token');

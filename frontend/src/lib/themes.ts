@@ -10,6 +10,7 @@ export const themes = [
 
 export type ThemeId = (typeof themes)[number]['id'];
 export const themeStorageKey = 'klack:theme';
+export const authPaths = ['/login', '/register', '/recover-password', '/verify-email'];
 
 export function readTheme(): ThemeId {
   try {
@@ -33,5 +34,5 @@ export function saveTheme(theme: ThemeId) {
   }
 }
 
-// Apply the saved palette before the first paint, including on the sign-in screen.
-export const themeBootstrap = `try{var t=localStorage.getItem('${themeStorageKey}');document.documentElement.dataset.theme=${JSON.stringify(themes.map((theme) => theme.id))}.includes(t)?t:'light'}catch(e){document.documentElement.dataset.theme='light'}`;
+// Authentication keeps its original palette; workspace preferences apply before first paint.
+export const themeBootstrap = `try{var t=localStorage.getItem('${themeStorageKey}');document.documentElement.dataset.theme=!${JSON.stringify(authPaths)}.includes(location.pathname.replace(/\\/$/,''))&&${JSON.stringify(themes.map((theme) => theme.id))}.includes(t)?t:'light'}catch(e){document.documentElement.dataset.theme='light'}`;

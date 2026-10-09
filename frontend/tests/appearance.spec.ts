@@ -55,12 +55,51 @@ test('saved appearance is applied before hydration and invalid preferences fall 
 }) => {
   await page.addInitScript(() => localStorage.setItem('klack:theme', 'midnight'));
   await page.route('**/_next/**/*.js*', (route) => route.abort());
-  await page.goto('/login');
+  await page.goto('/settings');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight');
   await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(16, 28, 48)');
   await page.addInitScript(() => localStorage.setItem('klack:theme', 'unknown'));
   await page.reload();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+});
+
+test('login and signup keep their original colors for every saved theme', async ({ page }) => {
+  await page.goto('/login');
+  for (const theme of ['dark', 'midnight', 'ocean', 'forest', 'rose', 'sand']) {
+    await page.evaluate((value) => localStorage.setItem('klack:theme', value), theme);
+    for (const path of ['/login', '/register']) {
+      await page.goto(path);
+      await expect(page.locator('.auth-page')).toBeVisible();
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+      await expect(page.locator('.auth-page')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+      await expect(page.locator('.auth-page')).toHaveCSS('color', 'rgb(25, 27, 44)');
+      await expect(page.getByLabel('Work email')).toHaveCSS(
+        'background-color',
+        'rgb(255, 255, 255)',
+      );
+      expect(await page.evaluate(() => localStorage.getItem('klack:theme'))).toBe(theme);
+    }
+  }
+});
+
+test('authentication is light before hydration and restores the saved theme after signing in', async ({
+  page,
+}) => {
+  await page.addInitScript(() => localStorage.setItem('klack:theme', 'midnight'));
+  await page.route('**/_next/**/*.js*', (route) => route.abort());
+  for (const path of ['/login', '/register']) {
+    await page.goto(path);
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+    await expect(page.locator('body')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  }
+  await page.unroute('**/_next/**/*.js*');
+  await appearance(page);
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'midnight');
+  await expect(page.getByRole('radio', { name: /^Midnight / })).toBeChecked();
+  await page.getByRole('button', { name: 'Sign out', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Welcome back', exact: true })).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
+  expect(await page.evaluate(() => localStorage.getItem('klack:theme'))).toBe('midnight');
 });
 
 test('mobile appearance works when browser storage is unavailable', async ({ page }) => {

@@ -452,6 +452,8 @@ time {
 
 /* Sign in */
 .auth-page {
+  background: var(--canvas);
+  color: var(--ink);
   display: grid;
   grid-template-columns: 55% 45%;
   min-height: 100dvh;

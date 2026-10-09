@@ -66,7 +66,7 @@ export function Auth({ path, signedIn }: { path: string; signedIn: (user: User) 
     }
   }
   return (
-    <main className="auth-page">
+    <main className="auth-page" data-theme="light">
       <section className="auth-main">
         <Link href="/" className="brand-link">
           <Logo />
