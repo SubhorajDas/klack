@@ -106,6 +106,16 @@ class FakeBroker:
         self.ready = ready
         self.allowed = allowed
         self.manager = RealtimeConnectionManager(queue_size=20, max_connections=10)
+        self.activities: list[dict[str, object]] = []
+
+    async def publish_activity(self, payload: dict[str, object]) -> None:
+        self.activities.append(payload)
+
+    async def touch_presence(self, connection: object) -> None:
+        del connection
+
+    async def remove_presence(self, connection: object) -> None:
+        del connection
 
     async def authorize_subscription(self, connection: object, **kwargs: object) -> bool:
         del connection, kwargs
@@ -232,3 +242,38 @@ async def test_denied_subscription_uses_generic_error(
         "request_id": str(REQUEST_ID),
         "code": "channel_access_denied",
     }
+
+
+@pytest.mark.parametrize("allowed", [True, False])
+async def test_typing_requires_subscription_and_uses_authenticated_identity(monkeypatch, allowed):
+    monkeypatch.setattr(
+        "klack.modules.realtime.api.router.SqlAlchemyIdentityRepository", FakeIdentityRepository
+    )
+    typing = {
+        "type": "typing",
+        "workspace_id": str(WORKSPACE_ID),
+        "channel_id": str(CHANNEL_ID),
+        "typing": True,
+    }
+    subscribe = {
+        "type": "subscribe",
+        "request_id": str(REQUEST_ID),
+        "workspace_id": str(WORKSPACE_ID),
+        "channel_id": str(CHANNEL_ID),
+    }
+    broker = FakeBroker(allowed=allowed)
+    websocket = FakeWebSocket(
+        container(broker),
+        commands=[
+            json.dumps(typing),
+            json.dumps(subscribe),
+            json.dumps(typing),
+            json.dumps({**typing, "typing": False}),
+            json.dumps({**typing, "user_id": str(UUID(int=999))}),
+        ],
+    )
+    await realtime(websocket)
+    assert len(broker.activities) == (2 if allowed else 0)
+    if allowed:
+        assert [event["typing"] for event in broker.activities] == [True, False]
+        assert all(event["user_id"] == str(USER_ID) for event in broker.activities)

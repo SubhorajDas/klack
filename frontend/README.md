@@ -1,6 +1,6 @@
 # Klack frontend
 
-Next.js App Router, React, and TypeScript frontend based on the supplied desktop/mobile UI references. All application data comes from the existing FastAPI API. Apply backend migrations through `20260925_0008` before starting the frontend.
+Next.js App Router, React, and TypeScript frontend based on the supplied desktop/mobile UI references. All application data comes from the existing FastAPI API. Apply backend migrations through `20261004_0012` before starting the frontend.
 
 See the [full-app quick start](../README.md#quick-start), [API contracts](../docs/api.md), and
 [system architecture](../docs/architecture/README.md) for the backend and runtime context.
@@ -13,12 +13,15 @@ See the [full-app quick start](../README.md#quick-start), [API contracts](../doc
 | `src/components/app.tsx` | Session bootstrap, authentication routing, signed-in call-provider lifetime |
 | `src/components/workspace-app.tsx` | Workspace shell, navigation, and unread refresh |
 | `src/components/conversation.tsx` | Messages, quoted-reply UI, composer, tab-local drafts, and retry-safe sends |
+| `src/components/rich-editor.tsx` | Tiptap formatting, Markdown input, code blocks, and attachment nodes |
+| `src/components/rich-message.tsx` | Safe rich message rendering, highlighted code, and inline file cards |
 | `src/components/direct-messages.tsx` | DM inbox, selection, and search |
 | `src/components/calls.tsx` | Global call inbox, controls, LiveKit media, and heartbeat cleanup |
 | `src/lib/api.ts` | HTTP requests, CSRF headers, and session recovery |
 | `src/lib/api-cache.ts` | Browser-only Redux metadata cache and concurrent request sharing |
 | `src/lib/use-conversation.ts` | History loading, pagination, realtime reconciliation, and reconnects |
 | `src/lib/messages.ts` | Merge by ID/revision and order messages |
+| `src/lib/conversation-activity.ts` | Receipt ordering and typing labels |
 | `next.config.ts` | Same-origin API forwarding |
 | `tests/` | Browser scenarios and isolated HTTP/WebSocket fixtures |
 
@@ -27,6 +30,17 @@ call notifications use a separate HTTP inbox and voice media connects directly t
 The global call provider survives conversation navigation; reloading the page ends its media
 connection. Drafts and uncertain sends are tab-local and isolated by conversation and user.
 For request and recovery flows, see the [architecture guide](../docs/architecture/README.md).
+
+Conversation activity uses the existing authorized socket. One typist is named; multiple typists
+show a count, deduplicated across tabs, and expire automatically. Your channel message info lists
+who has read it. DMs show grey double ticks after sending and blue double ticks after the peer reads.
+Receipts recover on reconnect, visibility changes, and a 15-second poll. A visible conversation
+marks its latest message read only at the bottom, outside search and history browsing.
+
+The signed-in shell maintains a presence connection on every screen. Online dots appear in
+channel messages, DMs, and People; DM headers show Online/Offline. Status is scoped to contacts,
+deduplicated across tabs/devices by Redis leases, and refreshed by live signals and a 15-second
+snapshot. A Redis outage displays Status unavailable rather than assuming users are offline.
 
 Workspace, channel, DM, member, and invitation lists share a Redux Toolkit cache through
 the existing API helper. Identical requests (including query parameters and session-recovery
@@ -74,6 +88,8 @@ The backend stack must be running for sign-in. No demo account is automatically 
 - Workspace home, switching, creation and invitation acceptance (`/join#token=…`).
 - Channel browsing, public joining, private creation, naming, archival/restoration, member management and leaving.
 - Channel history, older-page loading, sending, editing and content-erasing deletion.
+- Rich composition with bold, italic, strike, links, lists, quotes, inline code, and highlighted code blocks. Markdown shortcuts work while typing; plain Markdown can be pasted or inserted from the toolbar. The paperclip sits beside Send and inserts files at the cursor, with text above and below each card. Upload progress, retry, removal, file paste/drop, and attachment dragging remain inside the composer.
+- Rich drafts and sent messages preserve formatting and attachment order across reloads. Enter sends ordinary text, Shift+Enter inserts a line break, and Ctrl/Cmd+Enter sends from code blocks and lists; Enter inside those blocks continues writing. Editing preserves the existing files and lets users move their cards, but adding or removing files from an already sent message is not supported.
 - Inline quoted replies with shared history, saved draft quotes, reactions, and editing/deletion.
 - Private one-to-one DMs, persistent read positions, and unread badges.
 - Global Alerts inbox at `/activity`, with unread conversation previews from all workspaces and personal DMs, channel/DM filters, search, and individual or filtered bulk mark-as-read. Refreshes every 15 seconds while visible and after observed read/message events. Quoted replies are included; opening an alert opens its conversation. Read state persists on the server.
@@ -87,7 +103,7 @@ The backend stack must be running for sign-in. No demo account is automatically 
 - Account details, email verification requests, active session revocation, and a browser-local compact message preference.
 - Search within loaded channel messages and filtering available channels.
 
-The references also contain features that the backend does not support yet: uploads, pinned/saved messages, presence, group/video calls, Google/SSO, editable profiles, channel descriptions and notification preferences. These are marked as upcoming where shown; no successful backend action is simulated. Other members are labeled by shortened IDs because roster/message APIs do not return names or avatars. Call participants use their email's local part. Initials are used in place of invented profile photos. The conversation on the sign-in illustration is decorative sample copy.
+The references also contain features that the backend does not support yet: pinned/saved messages, group/video calls, Google/SSO, editable profiles, channel descriptions and notification preferences. These are marked as upcoming where shown; no successful backend action is simulated. Initials are used in place of profile photos. The conversation on the sign-in illustration is decorative sample copy.
 
 ## Verification
 

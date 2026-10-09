@@ -29,8 +29,15 @@ class PongCommand(RealtimeCommand):
     type: Literal["pong"]
 
 
+class TypingCommand(RealtimeCommand):
+    type: Literal["typing"]
+    workspace_id: UUID
+    channel_id: UUID
+    typing: bool
+
+
 InboundCommand = Annotated[
-    SubscribeCommand | UnsubscribeCommand | PongCommand,
+    SubscribeCommand | UnsubscribeCommand | PongCommand | TypingCommand,
     Field(discriminator="type"),
 ]
 inbound_command_adapter: TypeAdapter[InboundCommand] = TypeAdapter(InboundCommand)

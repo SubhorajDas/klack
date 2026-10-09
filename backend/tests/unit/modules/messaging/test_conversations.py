@@ -114,6 +114,65 @@ BASE = f"/api/v1/workspaces/{WORKSPACE_ID}"
 MESSAGES = f"{BASE}/channels/{CHANNEL_ID}/messages"
 
 
+async def test_read_receipts_are_durable_monotonic_and_private(conversation_api, session):
+    client, actor = conversation_api
+    dm = (await client.post(f"{BASE}/direct-messages", json={"user_id": str(PEER)})).json()
+    path = f"{BASE}/channels/{dm['id']}"
+    first = (await client.post(f"{path}/messages", json={"body": "First"})).json()
+    second = (await client.post(f"{path}/messages", json={"body": "Second"})).json()
+    assert (await client.get(f"{path}/read-receipts")).json() == {"readers": []}
+    actor.user.id = PEER
+    await client.put(f"{path}/read-cursor", json={"message_id": second["id"]})
+    await client.put(f"{path}/read-cursor", json={"message_id": first["id"]})
+    actor.user.id = AUTHOR_ID
+    receipts = (await client.get(f"{path}/read-receipts")).json()["readers"]
+    assert receipts == [
+        {
+            "user_id": str(PEER),
+            "message_id": second["id"],
+            "created_at": second["created_at"],
+        }
+    ]
+    actor.user.id = ADMIN
+    assert (await client.get(f"{path}/read-receipts")).status_code == 404
+    actor.user.id = AUTHOR_ID
+    assert (await client.get(f"{BASE}/channels/{CHANNEL_ID}/read-receipts")).json() == {
+        "readers": [],
+    }
+
+
+async def test_channel_receipts_require_membership_and_remove_departed_readers(conversation_api):
+    client, actor = conversation_api
+    path = f"{BASE}/channels/{CHANNEL_ID}"
+    message = (await client.post(MESSAGES, json={"body": "Channel receipt"})).json()
+    actor.user.id = PEER
+    assert (await client.get(f"{path}/read-receipts")).status_code == 403
+    await client.put(f"{path}/memberships/me")
+    await client.put(f"{path}/read-cursor", json={"message_id": message["id"]})
+    actor.user.id = AUTHOR_ID
+    assert (await client.get(f"{path}/read-receipts")).json()["readers"][0]["user_id"] == str(PEER)
+    await client.delete(f"{path}/memberships/{PEER}")
+    assert (await client.get(f"{path}/read-receipts")).json() == {"readers": []}
+
+
+async def test_presence_snapshot_is_contact_scoped(conversation_api, app, monkeypatch):
+    client, _actor = conversation_api
+    from unittest.mock import AsyncMock
+
+    unknown = uuid4()
+    activity = app.state.container.realtime_broker.activity
+    lookup = AsyncMock(return_value={PEER, unknown})
+    monkeypatch.setattr(activity, "online", lookup)
+    response = await client.get("/api/v1/presence")
+    assert response.status_code == 200
+    users = response.json()["users"]
+    assert {row["user_id"] for row in users} == {str(AUTHOR_ID), str(PEER), str(ADMIN)}
+    assert next(row for row in users if row["user_id"] == str(PEER))["online"] is True
+    assert unknown not in lookup.call_args.args[0]
+    lookup.return_value = None
+    assert (await client.get("/api/v1/presence")).json() == {"available": False, "users": []}
+
+
 async def test_quoted_replies_reactions_and_monotonic_reads(conversation_api):
     client, _actor = conversation_api
     first = (await client.post(MESSAGES, json={"body": "Root"})).json()

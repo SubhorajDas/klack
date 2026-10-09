@@ -7,7 +7,7 @@ import { useCachedApiData } from '@/lib/use-cached-data';
 import { type Channel, type Membership, type User } from '@/lib/types';
 import { useUnreadCounts, UnreadBadge } from '@/lib/unread-counts';
 import { Conversation } from './conversation';
-import { Alert, Avatar, Empty, Loading, Modal } from './ui';
+import { Alert, UserAvatar, OnlineLabel, Empty, Loading, Modal } from './ui';
 
 export function DirectMessages({
   user,
@@ -41,6 +41,8 @@ export function DirectMessages({
     const member = members.find((m) => m.user_id.replaceAll('-', '') === peer);
     return { ...channel, name: memberName(member?.user_id || peer, user) };
   }
+  const peerId = (channel: Channel) =>
+    channel.direct_key?.split(':').find((id) => id !== user.id.replaceAll('-', '')) || '';
   useEffect(() => {
     let stopped = false;
     setLoading(true);
@@ -149,10 +151,12 @@ export function DirectMessages({
                 aria-current={c.id === selectedId ? 'page' : undefined}
                 onClick={() => select(c.id)}
               >
-                <Avatar name={named(c).name} />
+                <UserAvatar userId={peerId(c)} name={named(c).name} />
                 <span>
                   <strong>{named(c).name}</strong>
-                  <small>Private conversation</small>
+                  <small>
+                    <OnlineLabel userId={peerId(c)} />
+                  </small>
                 </span>
                 <Unread channel={c.id} />
               </button>

@@ -76,6 +76,10 @@ def build_container(
         event_retention_seconds=settings.realtime_event_retention_seconds,
         cleanup_interval_seconds=settings.realtime_cleanup_interval_seconds,
         cleanup_batch_size=settings.realtime_cleanup_batch_size,
+        redis_url=settings.redis_url.get_secret_value() if settings.redis_url else None,
+        presence_lease_seconds=max(
+            settings.presence_lease_seconds, settings.realtime_heartbeat_seconds * 2 + 15
+        ),
     )
     return AppContainer(
         settings=settings,

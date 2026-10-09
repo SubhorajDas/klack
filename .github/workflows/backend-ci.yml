@@ -36,6 +36,15 @@ jobs:
       run:
         working-directory: backend
     services:
+      redis:
+        image: redis:8.2-alpine@sha256:b51665e66f00759be7c3152ad5ac3c66fb2f619c13ef62dea7cc1f9914524635
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
       postgres:
         image: postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382
         env:
@@ -64,6 +73,7 @@ jobs:
       AUTH_PUBLIC_WEB_ORIGIN: http://test
       AUTH_COOKIE_SECURE: "true"
       RUN_INTEGRATION_TESTS: "1"
+      REDIS_URL: redis://127.0.0.1:6379/0
 
     steps:
       - name: Check out repository

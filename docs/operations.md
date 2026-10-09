@@ -23,6 +23,7 @@ Use [`.env.example`](../.env.example) as the configuration inventory and
 | `SMTP_*`, `EMAIL_FROM_ADDRESS` | Identity-worker email delivery; blank SMTP disables delivery |
 | `IDENTITY_*` | Worker leases, polling, cleanup retention, and batch limits |
 | `REALTIME_*` | Listener, socket limits, authorization rechecks, and event retention |
+| `REDIS_URL`, `PRESENCE_LEASE_SECONDS` | Redis activity broadcasts and expiring online leases; use `rediss://` for TLS |
 | `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` | Optional backend call provider configuration |
 | `API_ORIGIN` in `frontend/.env.local` or server environment | Next.js upstream API location |
 
@@ -35,7 +36,7 @@ will break that contract; update the proxy/client routes together if changing th
 
 ## Deployment sequence
 
-1. Prepare PostgreSQL and the environment-specific secrets/origins. Verify database backup and
+1. Prepare PostgreSQL, Redis, and the environment-specific secrets/origins. Verify database backup and
    restore procedures before schema changes.
 2. Install the locked backend dependencies and run the one-shot Alembic job against the target
    database: `uv run --project backend alembic -c backend/alembic.ini upgrade head`.

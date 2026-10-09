@@ -16,13 +16,14 @@ test('visited screens render cached content while expired metadata and history a
   await page.getByLabel('Password', { exact: true }).fill('correct-horse-battery');
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await expect(page.getByRole('heading', { name: /Welcome back, maya/ })).toBeVisible();
+  const readMarked = page.waitForResponse(
+    (response) => response.url().endsWith('/read-cursor') && response.request().method() === 'PUT',
+  );
   await page.goto(`/w/${wid}/channel/${cid}`);
   await expect(page.getByText('Connected', { exact: true })).toBeVisible();
   await expect(page.getByRole('log')).toContainText('Here’s the latest iteration');
   // Read marking used to clear the entire cache. Let that real mutation finish.
-  await page.waitForResponse(
-    (response) => response.url().endsWith('/read-cursor') && response.request().method() === 'PUT',
-  );
+  await readMarked;
   await page.getByRole('button', { name: 'People', exact: true }).click();
   await expect(page.getByLabel('Search members')).toBeVisible();
   await page.getByRole('button', { name: 'Direct messages', exact: true }).click();

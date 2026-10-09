@@ -66,12 +66,21 @@ export function FilePicker({
   change,
   locked,
   registerInput,
+  inline = false,
+  added: onAdded = () => {},
+  registerActions,
 }: {
   path: string;
   entries: QueuedFile[];
   change: Dispatch<SetStateAction<QueuedFile[]>>;
   locked: boolean;
   registerInput: (accept: (files: File[]) => void) => void;
+  inline?: boolean;
+  added?: (entries: QueuedFile[]) => void;
+  registerActions?: (actions: {
+    retry: (key: string) => void;
+    remove: (key: string) => void;
+  }) => void;
 }) {
   const [limits, setLimits] = useState<Limits | null>(null);
   const [error, setError] = useState('');
@@ -154,6 +163,7 @@ export function FilePicker({
       return entry;
     });
     change((rows) => [...rows, ...added]);
+    onAdded(added);
     // Sequential uploads avoid monopolizing server capacity while preserving individual retry.
     void (async () => {
       for (const entry of added)
@@ -162,9 +172,23 @@ export function FilePicker({
   }
   useEffect(() => {
     registerInput(accept);
+    registerActions?.({
+      retry: (key) => {
+        const entry = entries.find((e) => e.key === key);
+        if (entry && !locked) void upload(entry);
+      },
+      remove: (key) => {
+        if (locked) return;
+        active.current.get(key)?.abort();
+        local.current.delete(key);
+        const entry = entries.find((e) => e.key === key);
+        change((rows) => rows.filter((row) => row.key !== key));
+        if (entry?.attachment) void api(`${path}/${entry.attachment.id}`, 'DELETE').catch(() => {});
+      },
+    });
   });
   return (
-    <div className="file-picker">
+    <div className={inline ? 'inline-file-picker' : 'file-picker'}>
       <input
         ref={input}
         type="file"
@@ -179,19 +203,21 @@ export function FilePicker({
       />
       <button
         type="button"
-        className="text-button"
+        className={inline ? 'icon-button' : 'text-button'}
+        aria-label="Attach files"
+        title="Attach files"
         disabled={locked || !limits?.enabled}
         onClick={() => input.current?.click()}
       >
-        <Paperclip size={16} /> Attach files
+        <Paperclip size={inline ? 20 : 16} /> {!inline && 'Attach files'}
       </button>
-      {limits?.enabled && (
+      {!inline && limits?.enabled && (
         <small className="muted">
           Up to {limits.max_attachments} files · {fileSize(limits.max_bytes)} each
         </small>
       )}
       <Alert>{error}</Alert>
-      {entries.length > 0 && (
+      {!inline && entries.length > 0 && (
         <ul className="upload-queue" aria-label="Attachments to send">
           {entries.map((entry) => (
             <li key={entry.key}>

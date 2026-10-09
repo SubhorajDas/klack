@@ -1,6 +1,7 @@
 """PostgreSQL LISTEN/NOTIFY fanout to process-local WebSockets."""
 
 import asyncio
+import json
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -20,6 +21,7 @@ from klack.modules.realtime.application.connections import (
     RealtimeConnection,
     RealtimeConnectionManager,
 )
+from klack.modules.realtime.infrastructure.activity import RedisActivity
 from klack.modules.realtime.infrastructure.repository import (
     REALTIME_NOTIFY_CHANNEL,
     SqlAlchemyRealtimeEventRepository,
@@ -51,6 +53,8 @@ class PostgresRealtimeBroker:
         event_retention_seconds: int,
         cleanup_interval_seconds: int,
         cleanup_batch_size: int,
+        redis_url: str | None = None,
+        presence_lease_seconds: int = 75,
     ) -> None:
         url = make_url(database_url).set(drivername="postgresql")
         self._dsn = url.render_as_string(hide_password=False)
@@ -69,9 +73,11 @@ class PostgresRealtimeBroker:
         self._listener: asyncpg.Connection | None = None
         self._delivery_tasks: set[asyncio.Task[None]] = set()
         self.ready = False
+        self.activity = RedisActivity(redis_url, lease_seconds=presence_lease_seconds)
 
     async def start(self) -> None:
         if self.enabled and self._supervisor is None:
+            self.activity.start(self._activity_notification, self._restore_presence)
             self._supervisor = asyncio.create_task(
                 self._listen_forever(),
                 name="klack-realtime-listener",
@@ -87,6 +93,7 @@ class PostgresRealtimeBroker:
 
     async def stop(self) -> None:
         self._stopping.set()
+        await self.activity.stop()
         listener = self._listener
         if listener is not None and not listener.is_closed():
             await listener.close()
@@ -168,6 +175,76 @@ class PostgresRealtimeBroker:
         task = asyncio.create_task(self._deliver(event_id))
         self._delivery_tasks.add(task)
         task.add_done_callback(self._delivery_tasks.discard)
+
+    async def publish_activity(self, payload: dict[str, object]) -> None:
+        if not self.enabled:
+            return
+        await self.activity.publish(payload)
+
+    def _activity_notification(self, payload: str) -> None:
+        try:
+            envelope = json.loads(payload)
+            if not isinstance(envelope, dict):
+                return
+            if envelope.get("type") == "presence.changed":
+                task = asyncio.create_task(self._presence_changed())
+                self._delivery_tasks.add(task)
+                task.add_done_callback(self._delivery_tasks.discard)
+                return
+            workspace_id = UUID(envelope["workspace_id"])
+            channel_id = UUID(envelope["channel_id"])
+            if envelope["type"] not in {"typing.changed", "read.changed"}:
+                return
+        except (ValueError, KeyError, TypeError):
+            return
+        task = asyncio.create_task(self._fanout_activity(workspace_id, channel_id, envelope))
+        self._delivery_tasks.add(task)
+        task.add_done_callback(self._delivery_tasks.discard)
+
+    async def _presence_changed(self) -> None:
+        # Send only a refresh signal. User identities are exposed exclusively by
+        # the authenticated, contact-scoped presence snapshot endpoint.
+        for connection in self.manager.connections():
+            if connection.access_expires_at > datetime.now(UTC):
+                self.manager.enqueue(connection, {"type": "presence.changed"})
+            else:
+                self.manager.request_close(connection, code=4401)
+
+    async def touch_presence(self, connection: RealtimeConnection) -> None:
+        await self.activity.lease(connection.user_id, connection.id, touch=True)
+
+    async def _restore_presence(self) -> None:
+        for connection in self.manager.connections():
+            if await self._session_active(connection):
+                await self.touch_presence(connection)
+
+    async def remove_presence(self, connection: RealtimeConnection) -> None:
+        await self.activity.lease(connection.user_id, connection.id, touch=False)
+
+    async def _fanout_activity(
+        self, workspace_id: UUID, channel_id: UUID, envelope: dict[str, object]
+    ) -> None:
+        try:
+            candidates = self.manager.candidates(workspace_id=workspace_id, channel_id=channel_id)
+            for connection in candidates:
+                active, allowed = await self._authorization(
+                    connection, workspace_id=workspace_id, channel_id=channel_id
+                )
+                if not active:
+                    self.manager.request_close(connection, code=4401)
+                elif allowed:
+                    self.manager.enqueue(connection, envelope)
+                else:
+                    self.manager.unsubscribe(connection, channel_id=channel_id)
+                    self.manager.enqueue(
+                        connection,
+                        {
+                            "type": "subscription.revoked",
+                            "channel_id": str(channel_id),
+                        },
+                    )
+        except Exception as exc:
+            logger.error("realtime_activity_delivery_failed", exception_type=_exception_type(exc))
 
     async def _deliver(self, event_id: UUID) -> None:
         try:

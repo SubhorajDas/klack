@@ -3,11 +3,14 @@
 import asyncio
 import os
 from pathlib import Path
+from types import SimpleNamespace
+from uuid import uuid4
 
 import asyncpg
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import text
 from test_global_dm_migration import migration_database as migration_database
 from test_messages_postgresql import _message_service, _seed_conversation, _settings
 
@@ -25,35 +28,40 @@ pytestmark = [
 def test_existing_thread_replies_keep_all_record_values(migration_database) -> None:
     del migration_database
     config = Config(Path(__file__).parents[2] / "alembic.ini")
-    command.upgrade(config, "20261003_0010")
+    command.upgrade(config, "20260928_0009")
 
     async def seed():
         container = build_container(_settings())
         try:
             seeded = await _seed_conversation(container)
             async with container.session_factory() as session:
-                service = _message_service(container, session)
-                args = dict(
-                    actor_user_id=seeded.owner_id,
-                    workspace_id=seeded.workspace_id,
-                    channel_id=seeded.channel_id,
-                )
-                root = await service.create_message(**args, body="Legacy root")
-                replies = [
-                    await service.create_message(
-                        **args,
-                        body=f"Legacy reply {i}",
-                        reply_to_message_id=root.id,
+                root = SimpleNamespace(id=uuid4(), body="Legacy root")
+                replies = [SimpleNamespace(id=uuid4(), body=f"Legacy reply {i}") for i in range(3)]
+                for index, message in enumerate([root, *replies]):
+                    await session.execute(
+                        text("""
+                        INSERT INTO message_messages(id,workspace_id,channel_id,author_user_id,
+                            body,created_at,revision,attachment_count,parent_message_id)
+                        VALUES(:id,:workspace,:channel,:author,:body,
+                            now()+make_interval(secs=>:index),1,0,:parent)
+                    """),
+                        {
+                            "id": message.id,
+                            "workspace": seeded.workspace_id,
+                            "channel": seeded.channel_id,
+                            "author": seeded.owner_id,
+                            "body": message.body,
+                            "index": index,
+                            "parent": root.id if index else None,
+                        },
                     )
-                    for i in range(3)
-                ]
+                await session.commit()
                 return seeded, root, replies
         finally:
             await container.engine.dispose()
 
     seeded, root, replies = asyncio.run(seed())
-    # Reconstruct the actual previous schema, then inspect its thread rows.
-    command.downgrade(config, "20260928_0009")
+    # Inspect actual legacy thread rows before applying newer migrations.
 
     async def records(legacy: bool):
         connection = await asyncpg.connect(
@@ -68,6 +76,7 @@ def test_existing_thread_replies_keep_all_record_values(migration_database) -> N
             if legacy:
                 for value in values:
                     value["reply_to_message_id"] = value.pop("parent_message_id")
+                    value["document"] = None
             return values
         finally:
             await connection.close()

@@ -157,6 +157,18 @@ class Settings(DatabaseSettings):
     workspace_invitation_ttl_seconds: Annotated[int, Field(ge=900, le=2_592_000)] = 604_800
 
     realtime_enabled: bool = False
+    redis_url: SecretStr | None = None
+    presence_lease_seconds: Annotated[int, Field(ge=30, le=900)] = 75
+
+    @field_validator("redis_url")
+    @classmethod
+    def validate_redis_url(cls, value: SecretStr | None) -> SecretStr | None:
+        if value is not None:
+            parsed = urlsplit(value.get_secret_value())
+            if parsed.scheme not in {"redis", "rediss"} or not parsed.hostname:
+                raise ValueError("REDIS_URL must be a redis:// or rediss:// URL")
+        return value
+
     realtime_max_connections: Annotated[int, Field(ge=1, le=100_000)] = 2_000
     realtime_max_subscriptions_per_connection: Annotated[int, Field(ge=1, le=1_000)] = 100
     realtime_outbound_queue_size: Annotated[int, Field(ge=1, le=10_000)] = 256

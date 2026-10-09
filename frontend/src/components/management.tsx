@@ -23,7 +23,7 @@ import {
   type Invitation,
   type Session,
 } from '@/lib/types';
-import { Alert, Avatar, Empty, Loading, Modal } from './ui';
+import { Alert, Avatar, UserAvatar, OnlineLabel, Empty, Loading, Modal } from './ui';
 
 export function People({
   user,
@@ -174,7 +174,11 @@ export function People({
                     <tr key={member.user_id}>
                       <td>
                         <div className="person-cell">
-                          <Avatar name={memberName(member.user_id, user)} small />
+                          <UserAvatar
+                            userId={member.user_id}
+                            name={memberName(member.user_id, user)}
+                            small
+                          />
                           <span>
                             <strong>
                               {memberName(member.user_id, user)}
@@ -184,6 +188,8 @@ export function People({
                               {member.user_id === user.id
                                 ? user.email
                                 : member.email || 'Email unavailable'}
+                              {' · '}
+                              <OnlineLabel userId={member.user_id} />
                             </small>
                           </span>
                         </div>

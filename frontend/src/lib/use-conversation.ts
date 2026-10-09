@@ -5,6 +5,7 @@ import { mergeMessages } from './messages';
 import { getBrowserApiCache } from './api-cache';
 import { useCachedData } from './use-cached-data';
 import { channelPath, type Message, type MessagePage, type User } from './types';
+import type { ReadPosition } from './conversation-activity';
 
 export function useConversation(workspace: string, channel: string) {
   const path = `${channelPath(workspace, channel)}/messages`;
@@ -26,6 +27,27 @@ export function useConversation(workspace: string, channel: string) {
   const readable = useRef(true);
   const historyEpoch = useRef(0);
   const navigating = useRef(false);
+  const [readers, setReaders] = useState<ReadPosition[]>([]);
+  const [receiptsError, setReceiptsError] = useState('');
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const sendTyping = useRef<(typing: boolean) => void>(() => {});
+  const typingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const lastTyping = useRef(0);
+
+  function typing(active: boolean) {
+    clearTimeout(typingTimer.current);
+    if (!active) {
+      if (!lastTyping.current) return;
+      lastTyping.current = 0;
+      sendTyping.current(false);
+      return;
+    }
+    if (Date.now() - lastTyping.current > 2000) {
+      lastTyping.current = Date.now();
+      sendTyping.current(true);
+    }
+    typingTimer.current = setTimeout(() => typing(false), 4000);
+  }
 
   useEffect(() => {
     if (
@@ -64,6 +86,50 @@ export function useConversation(workspace: string, channel: string) {
     let attempts = 0;
     let generation = 0;
     let snapshotSequence = 0;
+    const typists = new Map<string, { user: string; until: number; occurred: number }>();
+    let receiptRunning = false;
+    let receiptPending = false;
+    async function refreshReceipts() {
+      if (stopped || denied || document.visibilityState !== 'visible') return;
+      if (receiptRunning) {
+        receiptPending = true;
+        return;
+      }
+      receiptRunning = true;
+      try {
+        const result = await api<{ readers: ReadPosition[] }>(
+          `${channelPath(workspace, channel)}/read-receipts`,
+        );
+        if (!stopped && !denied) {
+          setReaders(result.readers);
+          setReceiptsError('');
+        }
+      } catch {
+        if (!stopped && !denied) setReceiptsError('Read receipts are temporarily unavailable.');
+      } finally {
+        receiptRunning = false;
+        if (receiptPending) {
+          receiptPending = false;
+          void refreshReceipts();
+        }
+      }
+    }
+    const activityTimer = setInterval(() => {
+      for (const [id, row] of typists) if (row.until <= Date.now()) typists.delete(id);
+      const users = [...new Set([...typists.values()].map((row) => row.user))];
+      setTypingUsers((current) =>
+        current.length === users.length && current.every((id, i) => id === users[i])
+          ? current
+          : users,
+      );
+    }, 1000);
+    const receiptTimer = setInterval(() => void refreshReceipts(), 15000);
+    const visibilityChanged = () => {
+      if (document.visibilityState !== 'visible') typing(false);
+      else void refreshReceipts();
+    };
+    document.addEventListener('visibilitychange', visibilityChanged);
+    void refreshReceipts();
     alive.current = true;
     readable.current = true;
     const previous = cache?.peek<MessagePage>(cacheKey);
@@ -113,6 +179,9 @@ export function useConversation(workspace: string, channel: string) {
       cache?.remove(cacheKey);
       historyEpoch.current++;
       setMessages([]);
+      setReaders([]);
+      setTypingUsers([]);
+      typists.clear();
       historyAnchor.current = null;
       setBrowsingHistory(false);
       navigating.current = false;
@@ -133,6 +202,17 @@ export function useConversation(workspace: string, channel: string) {
       const url = new URL('/api/v1/realtime', window.location.href);
       url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';
       socket = new WebSocket(url, 'klack.realtime.v1');
+      sendTyping.current = (active) => {
+        if (socket.readyState === WebSocket.OPEN && !denied && !stopped)
+          socket.send(
+            JSON.stringify({
+              type: 'typing',
+              workspace_id: workspace,
+              channel_id: channel,
+              typing: active,
+            }),
+          );
+      };
       const version = ++generation;
       socket.onopen = () =>
         socket.send(
@@ -152,7 +232,25 @@ export function useConversation(workspace: string, channel: string) {
           return;
         }
         if (data.type === 'ping') socket.send(JSON.stringify({ type: 'pong' }));
-        if (data.type === 'subscribed' && data.channel_id === channel) void snapshot(version, true);
+        if (data.type === 'subscribed' && data.channel_id === channel) {
+          void snapshot(version, true);
+          void refreshReceipts();
+        }
+        if (data.type === 'read.changed' && data.channel_id === channel) void refreshReceipts();
+        if (data.type === 'typing.changed' && data.channel_id === channel) {
+          const occurred = Date.parse(data.occurred_at);
+          const previous = typists.get(data.connection_id);
+          if (Number.isFinite(occurred) && (!previous || occurred >= previous.occurred)) {
+            if (data.typing)
+              typists.set(data.connection_id, {
+                user: data.user_id,
+                until: Date.now() + 6000,
+                occurred,
+              });
+            else typists.delete(data.connection_id);
+            setTypingUsers([...new Set([...typists.values()].map((row) => row.user))]);
+          }
+        }
         if (data.type === 'message.changed' && data.message.channel_id === channel) {
           merge([data.message]);
           window.dispatchEvent(new CustomEvent('klack:messages-changed', { detail: { channel } }));
@@ -170,6 +268,9 @@ export function useConversation(workspace: string, channel: string) {
       socket.onclose = () => {
         if (stopped || denied) return;
         generation++;
+        lastTyping.current = 0;
+        typists.clear();
+        setTypingUsers([]);
         setStatus('Reconnecting');
         timer = setTimeout(
           async () => {
@@ -192,7 +293,13 @@ export function useConversation(workspace: string, channel: string) {
     // Readable history remains available even if the socket cannot connect.
     void snapshot(generation, false);
     return () => {
+      typing(false);
       stopped = true;
+      clearInterval(activityTimer);
+      clearInterval(receiptTimer);
+      clearTimeout(typingTimer.current);
+      document.removeEventListener('visibilitychange', visibilityChanged);
+      sendTyping.current = () => {};
       alive.current = false;
       clearTimeout(timer);
       socket?.close();
@@ -245,6 +352,11 @@ export function useConversation(workspace: string, channel: string) {
     }
   }
   return {
+    readers,
+    ready: !loading,
+    receiptsError,
+    typingUsers,
+    typing,
     messages: loading && preview ? preview.messages : messages,
     next: loading ? null : next,
     status,

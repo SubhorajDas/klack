@@ -1,5 +1,7 @@
 """Direct conversation, reaction, and read cursor HTTP contracts."""
 
+from contextlib import suppress
+from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
@@ -65,6 +67,61 @@ class ReadRequest(StrictRequest):
 class ReadResponse(BaseModel):
     message_id: UUID | None
     unread_count: int
+
+
+class ReadPositionResponse(BaseModel):
+    user_id: UUID
+    message_id: UUID
+    created_at: datetime
+
+
+class ReadPositionsResponse(BaseModel):
+    readers: list[ReadPositionResponse]
+
+
+class PresenceUserResponse(BaseModel):
+    user_id: UUID
+    online: bool
+
+
+class PresenceResponse(BaseModel):
+    available: bool
+    users: list[PresenceUserResponse]
+
+
+@router.get("/presence", response_model=PresenceResponse)
+async def presence(
+    request: Request, service: Service, identity: CurrentIdentityDependency
+) -> PresenceResponse:
+    contacts = await service.contacts(identity.user.id)
+    user_ids = sorted({identity.user.id, *(contact.user_id for contact in contacts)})
+    activity = request.app.state.container.realtime_broker.activity
+    online = await activity.online(user_ids)
+    return PresenceResponse(
+        available=online is not None,
+        users=[]
+        if online is None
+        else [
+            PresenceUserResponse(user_id=user_id, online=user_id in online) for user_id in user_ids
+        ],
+    )
+
+
+@router.get(
+    "/workspaces/{workspace_id}/channels/{channel_id}/read-receipts",
+    response_model=ReadPositionsResponse,
+)
+async def read_receipts(
+    workspace_id: UUID, channel_id: UUID, service: Service, identity: CurrentIdentityDependency
+) -> ReadPositionsResponse:
+    return ReadPositionsResponse(
+        readers=[
+            ReadPositionResponse(user_id=user_id, message_id=message_id, created_at=created_at)
+            for user_id, message_id, created_at in await service.read_positions(
+                workspace_id, channel_id, identity.user.id
+            )
+        ]
+    )
 
 
 class AlertResponse(BaseModel):
@@ -248,10 +305,20 @@ async def set_read(
     workspace_id: UUID,
     channel_id: UUID,
     payload: ReadRequest,
+    request: Request,
     service: Service,
     identity: CurrentMutationIdentityDependency,
 ) -> ReadResponse:
     message_id, count = await service.read_state(
         workspace_id, channel_id, identity.user.id, payload.message_id
     )
+    # The cursor is durable even if the best-effort live notification fails.
+    with suppress(Exception):
+        await request.app.state.container.realtime_broker.publish_activity(
+            {
+                "type": "read.changed",
+                "workspace_id": str(workspace_id),
+                "channel_id": str(channel_id),
+            }
+        )
     return ReadResponse(message_id=message_id, unread_count=count)

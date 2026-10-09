@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (
+    JSON,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -17,6 +18,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from klack.core.db.base import Base
+from klack.modules.messaging.domain.document import Document
 
 
 class MessageRecord(Base):
@@ -79,6 +81,7 @@ class MessageRecord(Base):
         nullable=False,
     )
     body: Mapped[str | None] = mapped_column(Text)
+    document: Mapped[Document | None] = mapped_column(JSON(none_as_null=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

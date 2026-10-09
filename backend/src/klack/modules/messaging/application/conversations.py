@@ -1,5 +1,6 @@
 """Authorized conversation interactions over durable channel membership."""
 
+from datetime import datetime
 from uuid import UUID
 
 from klack.modules.channels.application.ports import WorkspaceAccessGateway
@@ -147,6 +148,7 @@ class ConversationService:
             await self.messages.update_message(
                 message_id=message_id,
                 body=message.body,
+                document=message.document,
                 edited_at=message.edited_at,
                 deleted_at=None,
                 revision=message.revision + 1,
@@ -179,3 +181,14 @@ class ConversationService:
         if message_id is not None:
             await self.repository.commit()
         return state
+
+    async def read_positions(
+        self, workspace_id: UUID, channel_id: UUID, actor: UUID
+    ) -> list[tuple[UUID, UUID, datetime]]:
+        await self.access.require_access(
+            actor_user_id=actor,
+            workspace_id=workspace_id,
+            channel_id=channel_id,
+            for_update=False,
+        )
+        return await self.repository.read_positions(channel_id)

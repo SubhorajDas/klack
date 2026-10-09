@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from klack.modules.files.domain import Attachment
 from klack.modules.files.models import FileRecord
+from klack.modules.messaging.domain.document import Document
 from klack.modules.messaging.domain.entities import Message, MessageQuote
 from klack.modules.messaging.infrastructure.models import MessageRecord, ReactionRecord
 
@@ -153,12 +154,14 @@ class SqlAlchemyMessageRepository:
         edited_at: datetime | None,
         deleted_at: datetime | None,
         revision: int = 1,
+        document: Document | None = None,
     ) -> None:
         await self._session.execute(
             update(MessageRecord)
             .where(MessageRecord.id == message_id)
             .values(
                 body=body,
+                document=document,
                 edited_at=edited_at,
                 deleted_at=deleted_at,
                 revision=revision,
@@ -248,6 +251,7 @@ class SqlAlchemyMessageRepository:
             channel_id=record.channel_id,
             author_user_id=record.author_user_id,
             body=record.body,
+            document=record.document if record.deleted_at is None else None,
             created_at=record.created_at,
             edited_at=record.edited_at,
             deleted_at=record.deleted_at,
@@ -269,6 +273,7 @@ class SqlAlchemyMessageRepository:
             "channel_id": message.channel_id,
             "author_user_id": message.author_user_id,
             "body": message.body,
+            "document": message.document,
             "created_at": message.created_at,
             "edited_at": message.edited_at,
             "deleted_at": message.deleted_at,

@@ -232,6 +232,19 @@ async def test_concurrent_attachment_retry_links_once(message_container: AppCont
             upload_id = upload.id
             await session.commit()
         client_id = uuid4()
+        document = {
+            "type": "doc",
+            "content": [
+                {"type": "paragraph", "content": [{"type": "text", "text": "Before"}]},
+                {"type": "attachment", "attrs": {"id": str(upload_id)}},
+                {
+                    "type": "codeBlock",
+                    "attrs": {"language": "python"},
+                    "content": [{"type": "text", "text": "print(1)"}],
+                },
+                {"type": "paragraph", "content": [{"type": "text", "text": "After"}]},
+            ],
+        }
 
         async def send() -> Message:
             async with message_container.session_factory() as session:
@@ -241,7 +254,8 @@ async def test_concurrent_attachment_retry_links_once(message_container: AppCont
                     actor_user_id=seeded.owner_id,
                     workspace_id=seeded.workspace_id,
                     channel_id=seeded.channel_id,
-                    body="",
+                    body="Before\n\nprint(1)\nAfter",
+                    document=document,
                     attachment_ids=(upload_id,),
                     client_message_id=client_id,
                 )
@@ -249,7 +263,10 @@ async def test_concurrent_attachment_retry_links_once(message_container: AppCont
         first, second = await asyncio.gather(send(), send())
         assert first.id == second.id
         assert first.attachments == second.attachments
+        assert first.document == second.document == document
         async with message_container.session_factory() as session:
+            message = await session.get(MessageRecord, first.id)
+            assert message is not None and message.document == document
             stored = await session.get(FileRecord, upload_id)
             assert stored is not None and stored.message_id == first.id
             events = (
@@ -434,6 +451,7 @@ async def test_postgres_broker_fans_out_and_rechecks_membership(
         event_retention_seconds=86_400,
         cleanup_interval_seconds=3_600,
         cleanup_batch_size=100,
+        redis_url=os.environ.get("REDIS_URL"),
     )
     connection = manager.register(
         websocket=object(),  # type: ignore[arg-type]
@@ -449,9 +467,17 @@ async def test_postgres_broker_fans_out_and_rechecks_membership(
         max_subscriptions=1,
     )
     await broker.start()
+
+    async def next_event():
+        async with asyncio.timeout(2):
+            while True:
+                event = await connection.outbound.get()
+                if event is None or event.get("type") != "presence.changed":
+                    return event
+
     try:
         for _ in range(100):
-            if broker.ready:
+            if broker.ready and (broker.activity.client is None or broker.activity.ready):
                 break
             await asyncio.sleep(0.01)
         assert broker.ready
@@ -466,10 +492,28 @@ async def test_postgres_broker_fans_out_and_rechecks_membership(
                 channel_id=seeded.channel_id,
                 body="cross-process delivery",
             )
-        delivered = await asyncio.wait_for(connection.outbound.get(), timeout=2)
+        delivered = await next_event()
         assert delivered is not None
         assert delivered["type"] == "message.changed"
         assert delivered["message"]["id"] == str(created.id)  # type: ignore[index]
+
+        for activity_type in ("typing.changed", "read.changed") if broker.activity.client else ():
+            activity: dict[str, object] = {
+                "type": activity_type,
+                "workspace_id": str(seeded.workspace_id),
+                "channel_id": str(seeded.channel_id),
+            }
+            if activity_type == "typing.changed":
+                activity.update(
+                    {
+                        "user_id": str(seeded.owner_id),
+                        "connection_id": str(session_id),
+                        "typing": True,
+                        "occurred_at": now.isoformat(),
+                    }
+                )
+            await broker.publish_activity(activity)
+            assert await next_event() == activity
 
         async with message_container.session_factory() as session:
             await session.execute(
@@ -479,6 +523,18 @@ async def test_postgres_broker_fans_out_and_rechecks_membership(
                 ),
             )
             await session.commit()
+        # Activity delivery must revoke removed members just like message delivery.
+        await broker.publish_activity(
+            {
+                "type": "typing.changed",
+                "workspace_id": str(seeded.workspace_id),
+                "channel_id": str(seeded.channel_id),
+                "user_id": str(seeded.owner_id),
+                "connection_id": str(session_id),
+                "typing": True,
+                "occurred_at": now.isoformat(),
+            }
+        )
         async with message_container.session_factory() as session:
             await _message_service(
                 message_container,
@@ -490,7 +546,7 @@ async def test_postgres_broker_fans_out_and_rechecks_membership(
                 channel_id=seeded.channel_id,
                 body="not for removed member",
             )
-        revoked = await asyncio.wait_for(connection.outbound.get(), timeout=2)
+        revoked = await next_event()
         assert revoked == {
             "type": "subscription.revoked",
             "channel_id": str(seeded.channel_id),

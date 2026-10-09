@@ -13,6 +13,7 @@ from klack.modules.messaging.application.ports import (
     MessageRepository,
     NullMessageEventWriter,
 )
+from klack.modules.messaging.domain.document import Document, validate_document
 from klack.modules.messaging.domain.entities import Message, MessageQuote
 from klack.modules.messaging.domain.errors import (
     ClientMessageConflict,
@@ -84,9 +85,11 @@ class MessageService:
         client_message_id: UUID | None = None,
         reply_to_message_id: UUID | None = None,
         attachment_ids: tuple[UUID, ...] = (),
+        document: Document | None = None,
     ) -> Message:
         """Persist a message after locking and rechecking channel membership."""
         self._validate_body(body, bool(attachment_ids))
+        validate_document(document, body, attachment_ids)
         channel = await self._channel_access.require_access(
             actor_user_id=actor_user_id,
             workspace_id=workspace_id,
@@ -116,6 +119,7 @@ class MessageService:
                 await self._repository.rollback()
                 if (
                     existing.body != body
+                    or existing.document != document
                     or existing.reply_to_message_id != reply_to_message_id
                     or tuple(a.id for a in existing.attachments) != attachment_ids
                 ):
@@ -135,6 +139,7 @@ class MessageService:
             channel_id=channel_id,
             author_user_id=actor_user_id,
             body=body,
+            document=document,
             created_at=self._clock(),
             edited_at=None,
             deleted_at=None,
@@ -160,6 +165,7 @@ class MessageService:
             )
             if existing is None or (
                 existing.body != body
+                or existing.document != document
                 or existing.reply_to_message_id != reply_to_message_id
                 or tuple(a.id for a in existing.attachments) != attachment_ids
             ):
@@ -230,6 +236,7 @@ class MessageService:
         channel_id: UUID,
         message_id: UUID,
         body: str,
+        document: Document | None = None,
     ) -> Message:
         """Edit a live message owned by the current channel member."""
         channel = await self._channel_access.require_access(
@@ -251,18 +258,26 @@ class MessageService:
             await self._repository.rollback()
             raise MessageDeleted
         self._validate_body(body, bool(message.attachments))
-        if message.body == body:
+        validate_document(document, body, tuple(file.id for file in message.attachments))
+        if message.body == body and message.document == document:
             await self._repository.rollback()
             return message
         edited_at = self._clock()
         await self._repository.update_message(
             message_id=message_id,
             body=body,
+            document=document,
             edited_at=edited_at,
             deleted_at=None,
             revision=message.revision + 1,
         )
-        changed = replace(message, body=body, edited_at=edited_at, revision=message.revision + 1)
+        changed = replace(
+            message,
+            body=body,
+            document=document,
+            edited_at=edited_at,
+            revision=message.revision + 1,
+        )
         await self._event_writer.append_message_changed(changed)
         await self._repository.commit()
         return changed
@@ -304,6 +319,7 @@ class MessageService:
         changed = replace(
             message,
             body=None,
+            document=None,
             attachments=(),
             deleted_at=deleted_at,
             revision=message.revision + 1,

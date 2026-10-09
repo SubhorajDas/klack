@@ -30,6 +30,7 @@ import {
 } from '@/lib/types';
 import { Alert, Avatar, Empty, Loading, Logo, Modal } from './ui';
 import { MemberNamesProvider } from '@/lib/member-names';
+import { PresenceProvider } from '@/lib/presence';
 import { DirectMessages, Unread } from './direct-messages';
 import { Conversation } from './conversation';
 import { People, Account } from './management';
@@ -48,7 +49,9 @@ type Dialog =
 export function WorkspaceApp(props: { user: User; setUser: (user: User | null) => void }) {
   return (
     <UnreadCountsProvider key={props.user.id}>
-      <WorkspaceShell {...props} />
+      <PresenceProvider user={props.user}>
+        <WorkspaceShell {...props} />
+      </PresenceProvider>
     </UnreadCountsProvider>
   );
 }

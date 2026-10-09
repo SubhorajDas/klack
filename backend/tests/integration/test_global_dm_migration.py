@@ -3,12 +3,14 @@
 import asyncio
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from uuid import uuid4
 
 import asyncpg
 import pytest
 from alembic import command
 from alembic.config import Config
+from sqlalchemy import text
 from test_conversations_postgresql import conversation
 from test_messages_postgresql import _message_service, _seed_conversation, _settings
 
@@ -56,16 +58,31 @@ def test_merge_keeps_quotes_files_reactions_reads_and_old_links(migration_databa
                 dm = await conversation(session).open_direct(
                     seeded.workspace_id, seeded.owner_id, seeded.member_id
                 )
-                root = await _message_service(container, session).create_message(
-                    actor_user_id=seeded.member_id,
-                    workspace_id=seeded.workspace_id,
-                    channel_id=dm.channel.id,
-                    body="First workspace history",
-                    client_message_id=uuid4(),
+                # Legacy-schema fixtures must not query columns added by later migrations.
+                root = SimpleNamespace(id=uuid4())
+                await session.execute(
+                    text("""
+                    INSERT INTO message_messages(id,workspace_id,channel_id,author_user_id,body,
+                        created_at,client_message_id,revision,attachment_count)
+                    VALUES(:id,:workspace,:channel,:author,
+                        'First workspace history',now(),:client,1,0)
+                """),
+                    {
+                        "id": root.id,
+                        "workspace": seeded.workspace_id,
+                        "channel": dm.channel.id,
+                        "author": seeded.member_id,
+                        "client": uuid4(),
+                    },
                 )
-                await conversation(session).read_state(
-                    seeded.workspace_id, dm.channel.id, seeded.owner_id, root.id
+                await session.execute(
+                    text("""
+                    INSERT INTO message_read_cursors(channel_id,user_id,message_id)
+                    VALUES(:channel,:user,:message)
+                """),
+                    {"channel": dm.channel.id, "user": seeded.owner_id, "message": root.id},
                 )
+                await session.commit()
             return seeded, dm.channel.id, root
         finally:
             await container.engine.dispose()

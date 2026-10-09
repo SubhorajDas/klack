@@ -183,10 +183,12 @@ class MemoryMessageRepository:
         edited_at: datetime | None,
         deleted_at: datetime | None,
         revision: int,
+        document: dict | None = None,
     ) -> None:
         self.messages[message_id] = replace(
             self.messages[message_id],
             body=body,
+            document=document,
             edited_at=edited_at,
             deleted_at=deleted_at,
             revision=revision,

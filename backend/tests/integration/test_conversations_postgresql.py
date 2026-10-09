@@ -96,6 +96,11 @@ async def test_concurrent_direct_creation_reactions_and_cursors(message_containe
             seeded.workspace_id, channel_id, seeded.owner_id
         )
         assert state == (max(replies, key=lambda m: (m.created_at, m.id)).id, 0)
+        positions = await conversation(session).read_positions(
+            seeded.workspace_id, channel_id, seeded.member_id
+        )
+        latest = max(replies, key=lambda m: (m.created_at, m.id))
+        assert positions == [(seeded.owner_id, latest.id, latest.created_at)]
         page = await _message_service(container, session).list_messages(
             actor_user_id=seeded.owner_id, workspace_id=seeded.workspace_id, channel_id=channel_id
         )

@@ -181,6 +181,61 @@ async def test_file_only_send_retry_history_download_edit_delete(files: Harness)
     )
 
 
+async def test_rich_message_order_edit_retry_and_delete(files: Harness):
+    attachment = await files.upload()
+
+    def paragraph(text):
+        return {"type": "paragraph", "content": [{"type": "text", "text": text}]}
+
+    document = {
+        "type": "doc",
+        "content": [
+            paragraph("Before"),
+            {"type": "attachment", "attrs": {"id": attachment["id"]}},
+            {
+                "type": "codeBlock",
+                "attrs": {"language": "python"},
+                "content": [{"type": "text", "text": "print(1)"}],
+            },
+            paragraph("After"),
+        ],
+    }
+    payload = {
+        "body": "Before\n\nprint(1)\nAfter",
+        "document": document,
+        "attachment_ids": [attachment["id"]],
+        "client_message_id": str(uuid4()),
+    }
+    response = await files.client.post(BASE + "/messages", json=payload, headers=HEADERS)
+    assert response.status_code == 201, response.text
+    message = response.json()
+    assert message["document"] == document
+    assert (await files.client.post(BASE + "/messages", json=payload, headers=HEADERS)).json()[
+        "id"
+    ] == message["id"]
+    history = (await files.client.get(BASE + "/messages")).json()["messages"][0]
+    assert history["document"] == document
+    document["content"][0]["content"][0]["marks"] = [{"type": "bold"}]
+    conflict = await files.client.post(BASE + "/messages", json=payload, headers=HEADERS)
+    assert conflict.status_code == 409
+    edited = await files.client.patch(
+        BASE + f"/messages/{message['id']}",
+        json={"body": payload["body"], "document": document},
+        headers=HEADERS,
+    )
+    assert edited.status_code == 200, edited.text
+    assert edited.json()["document"] == document and edited.json()["revision"] == 2
+    document["content"][1]["attrs"]["id"] = str(uuid4())
+    invalid = await files.client.patch(
+        BASE + f"/messages/{message['id']}",
+        json={"body": payload["body"], "document": document},
+        headers=HEADERS,
+    )
+    assert invalid.status_code == 422
+    await files.client.delete(BASE + f"/messages/{message['id']}", headers=HEADERS)
+    assert (await files.client.get(BASE + "/messages")).json()["messages"][0]["document"] is None
+
+
 async def test_attachment_ownership_membership_and_conversation_scope(files: Harness):
     attachment = await files.upload()
     assert (await files.client.get(BASE + f"/files/{attachment['id']}/content")).status_code == 404

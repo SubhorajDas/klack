@@ -124,6 +124,21 @@ does not grant message access: every operation requires current explicit channel
 Clients may supply `client_message_id` on creation and must reuse it when retrying an uncertain
 response. Messages expose a monotonic `revision` for deduplication and convergence.
 
+Create and edit accept an optional `document` containing the ordered rich message tree.
+The root is `{"type":"doc","content":[...]}`. Supported nodes are paragraphs, text,
+hard breaks, blockquotes, bullet/ordered lists and list items, code blocks with a `language`
+attribute, and attachment blocks with `attrs: {"id":"<attachment UUID>"}`. Text supports
+bold, italic, strike, code, and HTTP/HTTPS/mailto link marks. HTML is not stored or rendered.
+The tree is bounded at 64,000 serialized characters, 500 nodes, and 12 nesting levels.
+`body` remains the plain text fallback (up to 4,000 characters) for search, alerts, and quotes;
+it must match the tree's text, joining block children with newlines and ignoring attachment
+content. Each attachment must appear exactly once and belong to the message's authorized
+attachment set. Editing can reposition existing attachment blocks but cannot add/remove files.
+Legacy requests without `document` remain supported; legacy responses have a null document.
+REST and realtime include the document, formatting changes increment the revision, and
+uncertain-send retries compare the document as well as text, reply, and attachment IDs.
+Deletion clears the stored document and returns a content-free tombstone.
+
 ## Quoted replies, reactions, read cursors, and direct messages
 
 - Set `reply_to_message_id` when creating a quoted reply. All messages and replies appear in
@@ -143,8 +158,14 @@ response. Messages expose a monotonic `revision` for deduplication and convergen
   `{"message_id":"<uuid>"}`. Positions compare `(created_at, id)` and never move backward, including
   concurrent requests. `unread_count` includes live roots and replies from other people after that
   position. The UI marks visible conversations read at the bottom and refreshes badges every 15
-  seconds, on visibility changes, and after local reads. These are private positions, not shared
-  read receipts. Reading a later message acknowledges all earlier messages in that conversation.
+  seconds, on visibility changes, and after local reads. Reading a later message acknowledges all
+  earlier messages in that conversation.
+- `GET .../channels/{channel_id}/read-receipts` returns authorized members' read positions as
+  `{"readers":[{"user_id":"<uuid>","message_id":"<uuid>","created_at":"<timestamp>"}]}`.
+  Compare `(created_at, message_id)` with the message's `(created_at, id)` to find its readers;
+  exclude the sender. The timestamp is the cursor message's creation time, not the time it was read.
+  Channel message info lists readers for your messages. DMs show grey double ticks after a
+  successful send and blue double ticks when the peer's position reaches the message.
 - `GET|POST /api/v1/direct-messages` lists personal conversations or opens the unique conversation
   for `{"user_id":"<uuid>"}`. A new pair requires a shared workspace; existing DMs remain available
   after either person leaves it. `GET /api/v1/contacts` returns shared-workspace teammates and existing
@@ -162,6 +183,27 @@ response. Messages expose a monotonic `revision` for deduplication and convergen
   while personal DM history, messages, files, and calls remain accessible to the two participants.
 
 ## Realtime API
+
+Subscribed clients can send `{"type":"typing","workspace_id":"<uuid>","channel_id":"<uuid>",
+"typing":true}` (or `false` to stop). The server derives identity from the authenticated socket
+and rechecks channel access. `typing.changed` includes channel/workspace, user and connection IDs,
+typing state, and `occurred_at`. Clients deduplicate users across connections and expire typing
+after six seconds without a refresh. The composer throttles refreshes to two seconds and sends
+stop after four seconds of inactivity, sending, blur, hiding the tab, or leaving the conversation.
+`read.changed` signals a committed cursor update; clients refetch read receipts. Both activity
+signals fan out through Redis Pub/Sub with recipient authorization checks. Activity signals
+are best effort: reconnect/visibility refreshes and a 15-second receipt poll recover missed updates.
+
+`GET /api/v1/presence` returns `{available, users: [{user_id, online}]}` for your contacts and
+yourself only. Redis sorted-set leases track authenticated socket connections across replicas,
+tabs, and devices. Any live lease means online. Closing a connection removes only its lease;
+abrupt disconnects expire after 75 seconds by default, followed by the next 15-second snapshot.
+The server renews leases on incoming traffic/heartbeat replies and restores connected sessions
+after Redis reconnects. `presence.changed` contains no identities: it requests an authorized
+snapshot refresh. When Redis is unavailable, `available` is false and `users` is empty; the UI
+shows status unavailable. Online means connected to the app, including a background tab.
+Typing and presence require `REDIS_URL` and `REALTIME_ENABLED=true`. Durable messages and read
+positions remain in PostgreSQL, and committed message delivery retains its database event path.
 
 Connect to `GET /api/v1/realtime` with the `klack.realtime.v1` WebSocket subprotocol, the normal
 access cookie, and the exact trusted browser Origin. Message writes remain on REST. Subscribe with:
@@ -203,7 +245,7 @@ See the [call lifecycle](architecture/README.md#voice-call-lifecycle) for expiry
 Message creation accepts `attachment_ids` (up to five unique UUIDs). `body` defaults to
 an empty string; text or at least one ready attachment is required. Responses include
 `attachments: [{id, filename, size, content_type}]`, including realtime responses.
-Editing only changes text; empty text is valid while attachments remain. Deleted message
+Editing changes text and optional document structure; empty text is valid while attachments remain. Deleted message
 responses contain no attachment metadata. Retry identity includes attachment IDs in order.
 
 Under `/api/v1/workspaces/{workspace_id}/channels/{channel_id}/files`:

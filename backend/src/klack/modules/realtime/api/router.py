@@ -12,6 +12,7 @@ from klack.modules.identity.infrastructure.repository import SqlAlchemyIdentityR
 from klack.modules.realtime.api.schemas import (
     PongCommand,
     SubscribeCommand,
+    TypingCommand,
     UnsubscribeCommand,
     inbound_command_adapter,
 )
@@ -81,6 +82,8 @@ async def realtime(websocket: WebSocket) -> None:
         await websocket.close(code=1013)
         return
     sender = asyncio.create_task(_send_messages(connection))
+    await broker.touch_presence(connection)
+    presence_touched_at = monotonic()
     broker.manager.enqueue(
         connection,
         {
@@ -106,6 +109,9 @@ async def realtime(websocket: WebSocket) -> None:
                 broker.manager.enqueue(connection, {"type": "ping"})
                 continue
             now_monotonic = monotonic()
+            if now_monotonic - presence_touched_at >= 15:
+                await broker.touch_presence(connection)
+                presence_touched_at = now_monotonic
             if now_monotonic - command_window_started >= 60:
                 command_window_started = now_monotonic
                 command_count = 0
@@ -169,10 +175,29 @@ async def realtime(websocket: WebSocket) -> None:
                 )
             elif isinstance(command, PongCommand):
                 continue
+            elif isinstance(command, TypingCommand):
+                if (command.workspace_id, command.channel_id) not in connection.subscriptions:
+                    continue
+                if not await broker.authorize_subscription(
+                    connection, workspace_id=command.workspace_id, channel_id=command.channel_id
+                ):
+                    continue
+                await broker.publish_activity(
+                    {
+                        "type": "typing.changed",
+                        "workspace_id": str(command.workspace_id),
+                        "channel_id": str(command.channel_id),
+                        "user_id": str(connection.user_id),
+                        "connection_id": str(connection.id),
+                        "typing": command.typing,
+                        "occurred_at": datetime.now(UTC).isoformat(),
+                    }
+                )
     except WebSocketDisconnect:
         pass
     finally:
         broker.manager.unregister(connection)
+        await broker.remove_presence(connection)
         if not sender.done():
             sender.cancel()
         await asyncio.gather(sender, return_exceptions=True)

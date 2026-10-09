@@ -208,13 +208,14 @@ class SqlAlchemyConversationRepository:
 
     async def shared_workspace(self, actor: UUID, target: UUID) -> UUID | None:
         peer = aliased(MembershipRecord)
-        return await self.session.scalar(
+        workspace_id: UUID | None = await self.session.scalar(
             select(MembershipRecord.workspace_id)
             .join(peer, peer.workspace_id == MembershipRecord.workspace_id)
             .where(MembershipRecord.user_id == actor, peer.user_id == target)
             .order_by(MembershipRecord.workspace_id)
             .limit(1)
         )
+        return workspace_id
 
     async def contacts(self, actor: UUID) -> list[WorkspaceMembership]:
         mine = aliased(MembershipRecord)
@@ -330,3 +331,19 @@ class SqlAlchemyConversationRepository:
 
     async def commit(self) -> None:
         await self.session.commit()
+
+    async def read_positions(self, channel_id: UUID) -> list[tuple[UUID, UUID, datetime]]:
+        rows = await self.session.execute(
+            select(ReadCursorRecord.user_id, MessageRecord.id, MessageRecord.created_at)
+            .join(MessageRecord, MessageRecord.id == ReadCursorRecord.message_id)
+            .join(UserRecord, UserRecord.id == ReadCursorRecord.user_id)
+            .where(ReadCursorRecord.channel_id == channel_id, UserRecord.disabled_at.is_(None))
+        )
+        return [
+            (
+                user_id,
+                message_id,
+                created_at.replace(tzinfo=UTC) if created_at.tzinfo is None else created_at,
+            )
+            for user_id, message_id, created_at in rows
+        ]

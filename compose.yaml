@@ -65,6 +65,8 @@ x-backend-environment: &backend-environment
   IDENTITY_WORKER_POLL_SECONDS: ${IDENTITY_WORKER_POLL_SECONDS:-10}
   IDENTITY_CLEANUP_INTERVAL_SECONDS: ${IDENTITY_CLEANUP_INTERVAL_SECONDS:-3600}
   REALTIME_ENABLED: ${REALTIME_ENABLED:-true}
+  REDIS_URL: redis://redis:6379/0
+  PRESENCE_LEASE_SECONDS: ${PRESENCE_LEASE_SECONDS:-75}
   REALTIME_MAX_CONNECTIONS: ${REALTIME_MAX_CONNECTIONS:-2000}
   REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION: ${REALTIME_MAX_SUBSCRIPTIONS_PER_CONNECTION:-100}
   REALTIME_OUTBOUND_QUEUE_SIZE: ${REALTIME_OUTBOUND_QUEUE_SIZE:-256}
@@ -84,6 +86,19 @@ x-json-logging: &json-logging
     max-file: "3"
 
 services:
+  redis:
+    image: redis:8.2-alpine@sha256:b51665e66f00759be7c3152ad5ac3c66fb2f619c13ef62dea7cc1f9914524635
+    restart: unless-stopped
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "256mb"]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    logging: *json-logging
+
   postgres:
     image: postgres:18.4-bookworm@sha256:882236b897e39051d2368c5ccc6cda944904723506b2dfc97f2a8f5bc9afa382
     restart: unless-stopped
@@ -151,6 +166,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      redis:
+        condition: service_healthy
     healthcheck:
       test:
         - CMD

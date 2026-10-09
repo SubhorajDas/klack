@@ -218,9 +218,9 @@ test('file-only sends survive retry and reload, download, and appear in Files', 
     mimeType: 'text/plain',
     buffer: Buffer.from('Notes from our meeting'),
   });
-  await expect(page.getByLabel('Attachments to send')).toContainText('Ready');
+  await expect(page.locator('.editor-attachment')).toContainText('Ready');
   await page.reload();
-  await expect(page.getByLabel('Attachments to send')).toContainText('meeting-notes.txt');
+  await expect(page.locator('.editor-attachment')).toContainText('meeting-notes.txt');
   await request.post('http://127.0.0.1:8100/__mode', { data: { mode: 'fail-once' } });
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.getByText('Response lost. Please retry.')).toBeVisible();
@@ -229,7 +229,7 @@ test('file-only sends survive retry and reload, download, and appear in Files', 
     .getByRole('log')
     .getByRole('button', { name: 'Download meeting-notes.txt' });
   await expect(download).toHaveCount(1);
-  await expect(page.getByLabel('Attachments to send')).toHaveCount(0);
+  await expect(page.locator('.editor-attachment')).toHaveCount(0);
   const received = page.waitForEvent('download');
   await download.click();
   expect((await received).suggestedFilename()).toBe('meeting-notes.txt');
@@ -262,12 +262,12 @@ test('uploads retry individually, reject too many files, and can be removed', as
     mimeType: 'text/plain',
     buffer: Buffer.from('retry me'),
   });
-  await expect(page.getByLabel('Attachments to send')).toContainText('Connection interrupted.');
+  await expect(page.locator('.editor-attachment')).toContainText('Connection interrupted.');
   await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Retry upload' }).click();
-  await expect(page.getByLabel('Attachments to send')).toContainText('Ready');
+  await expect(page.locator('.editor-attachment')).toContainText('Ready');
   await page.getByRole('button', { name: 'Remove retry.txt' }).click();
-  await expect(page.getByLabel('Attachments to send')).toHaveCount(0);
+  await expect(page.locator('.editor-attachment')).toHaveCount(0);
 });
 
 test('files can be sent as quoted replies and in private DMs on mobile', async ({ page }) => {
@@ -283,7 +283,7 @@ test('files can be sent as quoted replies and in private DMs on mobile', async (
   await page
     .getByLabel('Choose attachments')
     .setInputFiles({ name: 'reply.txt', mimeType: 'text/plain', buffer: Buffer.from('reply') });
-  await expect(page.getByLabel('Attachments to send')).toContainText('Ready');
+  await expect(page.locator('.editor-attachment')).toContainText('Ready');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(
     page.locator('article.message').filter({ hasText: 'reply.txt' }).locator('.message-quote'),
@@ -298,13 +298,114 @@ test('files can be sent as quoted replies and in private DMs on mobile', async (
   await page
     .getByLabel('Choose attachments')
     .setInputFiles({ name: 'private.txt', mimeType: 'text/plain', buffer: Buffer.from('private') });
-  await expect(page.getByLabel('Attachments to send')).toContainText('Ready');
+  await expect(page.locator('.editor-attachment')).toContainText('Ready');
   await page.getByRole('button', { name: 'Send message', exact: true }).click();
   await expect(page.getByRole('log')).toContainText('private.txt');
   await page.screenshot({ path: 'test-results/files-mobile.png', fullPage: true });
 });
 test.beforeEach(async ({ request }) => {
   await request.post('http://127.0.0.1:8100/__reset');
+});
+
+test('rich messages preserve text, attachments, and code through draft restore, edit, and reload', async ({
+  page,
+  request,
+}) => {
+  await login(page);
+  await openChannel(page);
+  const composer = page.getByRole('textbox', { name: 'Message product-design', exact: true });
+  await composer.fill('Before the attachment');
+  await page.getByRole('button', { name: 'Attach files', exact: true }).click();
+  await page
+    .getByLabel('Choose attachments')
+    .setInputFiles({ name: 'example.txt', mimeType: 'text/plain', buffer: Buffer.from('example') });
+  await expect(page.locator('.editor-attachment')).toContainText('Ready');
+  await composer.press('Control+End');
+  await composer.pressSequentially('After the attachment');
+  await composer.press('Shift+Enter');
+  await page.getByRole('button', { name: 'Insert Markdown', exact: true }).click();
+  await page
+    .getByRole('textbox', { name: 'Markdown', exact: true })
+    .fill('```python\nprint("hello")\n```\n\n**Final note**');
+  await page.getByRole('button', { name: 'Insert', exact: true }).click();
+  await expect(composer.locator('pre')).toContainText('print("hello")');
+  await expect(composer.locator('strong').filter({ hasText: 'Final note' })).toContainText(
+    'Final note',
+  );
+  await page.reload();
+  await expect(composer.locator('pre')).toContainText('print("hello")');
+  await expect(page.locator('.editor-attachment')).toContainText('Ready');
+  await page.screenshot({ path: 'test-results/rich-composer-desktop.png', fullPage: true });
+  await page.getByRole('button', { name: 'Send message', exact: true }).click();
+  await expect(composer).toHaveText('');
+  const message = page.locator('article.message').filter({ hasText: 'Before the attachment' });
+  await expect(message.getByRole('button', { name: 'Download example.txt' })).toBeVisible();
+  await expect(message.locator('pre')).toContainText('print("hello")');
+  await expect(message.locator('strong').filter({ hasText: 'Final note' })).toContainText(
+    'Final note',
+  );
+  const stats = await (await request.get('http://127.0.0.1:8100/__stats')).json();
+  const write = stats.writes.find((entry: { body?: string }) =>
+    entry.body?.includes('Before the attachment'),
+  );
+  expect(write.document.content.map((node: { type: string }) => node.type)).toEqual([
+    'paragraph',
+    'attachment',
+    'paragraph',
+    'codeBlock',
+    'paragraph',
+  ]);
+  expect(write.document.content[1].attrs.id).toBe(write.attachment_ids[0]);
+  await message.hover();
+  await message.getByRole('button', { name: 'Edit message', exact: true }).click();
+  const edit = page.getByRole('dialog', { name: 'Edit message', exact: true });
+  await expect(edit.locator('pre')).toContainText('print("hello")');
+  await expect(edit.locator('.editor-attachment')).toContainText('example.txt');
+  const input = edit.getByRole('textbox', { name: 'Message', exact: true });
+  await input.press('Control+Home');
+  await input.pressSequentially('Edited: ');
+  await edit.getByRole('button', { name: 'Save changes' }).click();
+  await page.reload();
+  await expect(message).toContainText('Edited: Before the attachment');
+  await expect(message.locator('pre')).toContainText('print("hello")');
+  await expect(message.getByRole('button', { name: 'Download example.txt' })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator('.sidebar')).not.toBeInViewport();
+  await page.screenshot({ path: 'test-results/rich-message-mobile.png', fullPage: true });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true,
+  );
+});
+
+test('code and list Enter continue content, while Ctrl+Enter sends', async ({ page }) => {
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
+  await login(page);
+  await openChannel(page);
+  const composer = page.getByRole('textbox', { name: 'Message product-design', exact: true });
+  await page.getByRole('button', { name: 'Code block', exact: true }).click();
+  await page.getByLabel('Code language').selectOption('javascript');
+  await composer.pressSequentially('const a = 1;');
+  await composer.press('Enter');
+  await composer.pressSequentially('console.log(a);');
+  await expect(composer.locator('pre')).toContainText('console.log(a);');
+  await composer.press('Control+Enter');
+  await expect(page.getByRole('log').locator('pre')).toContainText('const a = 1;\nconsole.log(a);');
+  await page.getByRole('button', { name: 'Copy code', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Copied', exact: true })).toBeVisible();
+  await expect(composer).toHaveText('');
+  await page.getByRole('button', { name: 'Numbered list', exact: true }).click();
+  await composer.pressSequentially('First');
+  await composer.press('Enter');
+  await composer.pressSequentially('Second');
+  await expect(composer.locator('li')).toHaveCount(2);
+  await composer.press('Control+Enter');
+  await expect(page.getByRole('log').locator('ol li')).toHaveCount(2);
+  await composer.pressSequentially('```python');
+  await composer.press('Enter');
+  await expect(composer.locator('pre')).toHaveCount(1);
+  await composer.pressSequentially('print("typed fence")');
+  await composer.press('Control+Enter');
+  await expect(page.getByRole('log').locator('pre').last()).toContainText('print("typed fence")');
 });
 
 test('sign in, responsive workspace, channel browser and channel creation', async ({ page }) => {
@@ -336,7 +437,7 @@ test('real proxy transports cookies, CSRF, socket updates, edits, and deletions'
   await expect(
     page.getByRole('log').getByText('A new idea for the team', { exact: true }),
   ).toHaveCount(1);
-  await expect(composer).toHaveValue('');
+  await expect(composer).toHaveText('');
   const row = page.locator('article').filter({ hasText: 'A new idea for the team' });
   await row.hover();
   await row.getByRole('button', { name: 'Edit message', exact: true }).click();
@@ -372,7 +473,7 @@ test('an uncertain send retries with its original client ID and never duplicates
   await page.getByRole('button', { name: 'Retry send', exact: true }).first().click();
   await expect(
     page.getByRole('textbox', { name: 'Message product-design', exact: true }),
-  ).toHaveValue('');
+  ).toHaveText('');
   await expect(page.getByRole('log').getByText('Retry-safe message', { exact: true })).toHaveCount(
     1,
   );
@@ -443,7 +544,7 @@ test('mobile navigation, joining, drafts and empty/search states', async ({ page
   await page.reload();
   await expect(
     page.getByRole('textbox', { name: 'Message product-design', exact: true }),
-  ).toHaveValue('Keep this draft');
+  ).toHaveText('Keep this draft');
   await page.screenshot({ path: 'test-results/channel-mobile.png', fullPage: true });
   await page.getByRole('textbox', { name: 'Search loaded messages' }).fill('no such message');
   await expect(page.getByRole('heading', { name: 'No messages found' })).toBeVisible();
@@ -482,21 +583,56 @@ test('quoted replies, reactions, and direct messages work through the browser', 
   await expect(page.locator('article.message').filter({ hasText: 'alex' }).first()).toBeVisible();
   await expect(page.locator('.message-list')).not.toContainText('Member alex-123');
   const first = page.locator('article.message').first();
+  await expect(first.locator('.reaction-chip')).toHaveCount(0);
+  await first.getByRole('button', { name: 'Add reaction', exact: true }).click();
+  const picker = first.getByRole('dialog', { name: 'Choose a reaction' });
+  await expect(picker.getByRole('button')).toHaveCount(6);
+  await page.keyboard.press('Escape');
+  await expect(picker).toHaveCount(0);
+  await expect(first.getByRole('button', { name: 'Add reaction', exact: true })).toBeFocused();
+  await first.getByRole('button', { name: 'Add reaction', exact: true }).click();
   await first.getByRole('button', { name: 'Add 👍 reaction', exact: true }).click();
+  await expect(picker).toHaveCount(0);
+  await expect(first.locator('.reaction-chip')).toHaveText('👍 1');
   await expect(first.getByRole('button', { name: 'Remove 👍 reaction' })).toHaveAttribute(
     'aria-pressed',
     'true',
   );
-  await page.locator('.composer textarea').fill('Keep this draft');
+  await page.request.post('http://127.0.0.1:8100/__reaction', {
+    data: { message_id: 'm1', emoji: '👍' },
+  });
+  await expect(first.locator('.reaction-chip')).toHaveText('👍 2');
+  await first.getByRole('button', { name: 'Remove 👍 reaction', exact: true }).click();
+  await expect(first.getByRole('button', { name: 'Add 👍 reaction', exact: true })).toHaveText(
+    '👍 1',
+  );
+  await first.getByRole('button', { name: 'Add reaction', exact: true }).click();
+  await page.screenshot({ path: 'test-results/reaction-picker-desktop.png' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(picker).toBeVisible();
+  await expect
+    .poll(() =>
+      page.locator('.sidebar').evaluate((element) => element.getBoundingClientRect().right),
+    )
+    .toBeLessThanOrEqual(0);
+  await expect(picker).toBeInViewport();
+  await page.screenshot({
+    path: 'test-results/reaction-picker-mobile.png',
+    animations: 'disabled',
+  });
+  await page.locator('.composer .rich-editor-input').click();
+  await expect(picker).toHaveCount(0);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.locator('.composer .rich-editor-input').fill('Keep this draft');
   await first.hover();
   await first.getByRole('button', { name: 'Reply', exact: true }).click();
-  await expect(page.locator('.composer textarea')).toHaveValue('Keep this draft');
+  await expect(page.locator('.composer .rich-editor-input')).toHaveText('Keep this draft');
   await page.getByRole('button', { name: 'Cancel reply' }).click();
-  await expect(page.locator('.composer textarea')).toHaveValue('Keep this draft');
+  await expect(page.locator('.composer .rich-editor-input')).toHaveText('Keep this draft');
   await first.hover();
   await first.getByRole('button', { name: 'Reply', exact: true }).click();
-  await page.locator('.composer textarea').fill('A focused quoted reply');
-  await page.locator('.composer textarea').press('Enter');
+  await page.locator('.composer .rich-editor-input').fill('A focused quoted reply');
+  await page.locator('.composer .rich-editor-input').press('Enter');
   const reply = page
     .locator('article.message')
     .filter({ has: page.locator('p', { hasText: 'A focused quoted reply' }) });
@@ -512,8 +648,8 @@ test('quoted replies, reactions, and direct messages work through the browser', 
     .filter({ has: page.locator('p', { hasText: 'Updated reply' }) });
   await editedReply.hover();
   await editedReply.getByRole('button', { name: 'Reply', exact: true }).click();
-  await page.locator('.composer textarea').fill('Replying to a reply');
-  await page.locator('.composer textarea').press('Enter');
+  await page.locator('.composer .rich-editor-input').fill('Replying to a reply');
+  await page.locator('.composer .rich-editor-input').press('Enter');
   await expect(
     page
       .locator('article.message')
@@ -522,7 +658,7 @@ test('quoted replies, reactions, and direct messages work through the browser', 
   ).toContainText('Updated reply');
   await page.screenshot({ path: 'test-results/quoted-reply-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(page.locator('.composer textarea')).toBeVisible();
+  await expect(page.locator('.composer .rich-editor-input')).toBeVisible();
   await page.screenshot({
     path: 'test-results/quoted-reply-mobile.png',
     fullPage: true,
@@ -533,8 +669,8 @@ test('quoted replies, reactions, and direct messages work through the browser', 
   await page.getByRole('button', { name: 'New direct message' }).click();
   await page.getByLabel('Start a conversation').selectOption('alex-123');
   await page.getByRole('button', { name: 'Open conversation' }).click();
-  await page.locator('.composer textarea').fill('A private hello');
-  await page.locator('.composer textarea').press('Enter');
+  await page.locator('.composer .rich-editor-input').fill('A private hello');
+  await page.locator('.composer .rich-editor-input').press('Enter');
   await expect(page.getByRole('log')).toContainText('A private hello');
   await page.getByRole('button', { name: 'Back to direct messages', exact: true }).click();
   await page.getByRole('button', { name: /alex/ }).click();
@@ -561,12 +697,12 @@ test('quoted drafts survive reload, retries keep their quote, and deletion redac
   const original = page.locator('#message-m1');
   await original.hover();
   await original.getByRole('button', { name: 'Reply', exact: true }).click();
-  await page.locator('.composer textarea').fill('Saved quoted draft');
+  await page.locator('.composer .rich-editor-input').fill('Saved quoted draft');
   await page.reload();
-  await expect(page.locator('.composer textarea')).toHaveValue('Saved quoted draft');
+  await expect(page.locator('.composer .rich-editor-input')).toHaveText('Saved quoted draft');
   await expect(page.getByLabel('Replying to message')).toContainText('onboarding flow');
   await request.post('http://127.0.0.1:8100/__mode', { data: { mode: 'fail-once' } });
-  await page.locator('.composer textarea').press('Enter');
+  await page.locator('.composer .rich-editor-input').press('Enter');
   await expect(page.locator('.send-error')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Cancel reply' })).toBeDisabled();
   await page.reload();

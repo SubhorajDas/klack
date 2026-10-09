@@ -8,6 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from klack.modules.files.domain import Attachment
 from klack.modules.messaging.application.service import MessagePage
+from klack.modules.messaging.domain.document import Document
 from klack.modules.messaging.domain.entities import Message
 
 
@@ -24,6 +25,7 @@ class CreateMessageRequest(StrictRequest):
     """Create a message in one channel."""
 
     body: str = Field(default="", max_length=4_000)
+    document: Document | None = None
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=5)
     client_message_id: UUID | None = None
     reply_to_message_id: UUID | None = None
@@ -41,6 +43,7 @@ class UpdateMessageRequest(StrictRequest):
     """Replace the body of an existing message."""
 
     body: str = Field(max_length=4_000)
+    document: Document | None = None
 
 
 class QuoteResponse(BaseModel):
@@ -72,6 +75,7 @@ class MessageResponse(BaseModel):
     reactions: list[tuple[str, UUID]]
     quote: QuoteResponse | None
     attachments: list[Attachment]
+    document: Document | None = None
 
     @classmethod
     def from_domain(cls, message: Message) -> Self:
@@ -82,6 +86,7 @@ class MessageResponse(BaseModel):
             channel_id=message.channel_id,
             author_user_id=message.author_user_id,
             body=message.body,
+            document=message.document if not message.is_deleted else None,
             created_at=message.created_at,
             edited_at=message.edited_at,
             deleted_at=message.deleted_at,

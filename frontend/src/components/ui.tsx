@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, type ReactNode } from 'react';
 import { X, MessageSquare, LoaderCircle } from 'lucide-react';
+import { useOnlineStatus } from '@/lib/presence';
 
 export function Logo({ name = 'Klack' }: { name?: string }) {
   return (
@@ -15,6 +16,39 @@ export function Avatar({ name, small = false }: { name: string; small?: boolean 
   return (
     <span className={`avatar color-${color} ${small ? 'small' : ''}`} aria-hidden="true">
       {name.slice(0, 2).toUpperCase()}
+    </span>
+  );
+}
+export function UserAvatar({
+  userId,
+  name,
+  small = false,
+}: {
+  userId: string;
+  name: string;
+  small?: boolean;
+}) {
+  const status = useOnlineStatus(userId);
+  return (
+    <span className="user-avatar">
+      <Avatar name={name} small={small} />
+      {status !== 'unknown' && (
+        <span
+          className={`presence-dot ${status}`}
+          role="img"
+          aria-label={`${name} is ${status}`}
+          title={`${name} is ${status}`}
+        />
+      )}
+    </span>
+  );
+}
+
+export function OnlineLabel({ userId }: { userId: string }) {
+  const status = useOnlineStatus(userId);
+  return (
+    <span className={`online-label ${status}`}>
+      {status === 'unknown' ? 'Status unavailable' : status === 'online' ? 'Online' : 'Offline'}
     </span>
   );
 }

@@ -5,6 +5,7 @@ from datetime import datetime
 from uuid import UUID
 
 from klack.modules.files.domain import Attachment
+from klack.modules.messaging.domain.document import Document
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +49,7 @@ class Message:
     reactions: tuple[tuple[str, UUID], ...] = ()
     quote: MessageQuote | None = None
     attachments: tuple[Attachment, ...] = ()
+    document: Document | None = None
 
     @property
     def is_deleted(self) -> bool:

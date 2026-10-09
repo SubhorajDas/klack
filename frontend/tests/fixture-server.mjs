@@ -14,6 +14,10 @@ const user = {
 const workspace = { id: wid, name: 'Design team', created_at: user.created_at };
 let channels, messages, writes, subscribers, invitations, mode;
 let cursors;
+let receiptPositions = new Map();
+let typingCommands = [];
+let presenceAvailable = true;
+let presenceUsers = [];
 let hasWorkspace;
 function reset() {
   hasWorkspace = true;
@@ -90,6 +94,14 @@ function reset() {
   invitations = [];
   mode = '';
   cursors = new Map();
+  receiptPositions = new Map();
+  typingCommands = [];
+  presenceAvailable = true;
+  presenceUsers = [
+    { user_id: uid, online: true },
+    { user_id: 'alex-123', online: false },
+    { user_id: 'sam-5678', online: true },
+  ];
 }
 reset();
 const membership = { user_id: uid, workspace_id: wid, role: 'owner', joined_at: user.created_at };
@@ -156,7 +168,36 @@ const server = createServer(async (req, res) => {
     }
     return json({ ok: true });
   }
-  if (path === '/__stats') return json({ writes, subscribers });
+  if (path === '/__stats') return json({ writes, subscribers, typingCommands });
+  if (path === '/__activity') {
+    if (body.readers) receiptPositions.set(body.channel_id, body.readers);
+    const payload = body.readers
+      ? { type: 'read.changed', channel_id: body.channel_id }
+      : {
+          type: 'typing.changed',
+          occurred_at: new Date().toISOString(),
+          ...body,
+        };
+    for (const client of wss.clients)
+      if (client.readyState === 1 && client.channel === body.channel_id)
+        client.send(JSON.stringify(payload));
+    return json({ ok: true });
+  }
+  if (path === '/__presence') {
+    presenceAvailable = body.available ?? true;
+    presenceUsers = body.users || presenceUsers;
+    for (const client of wss.clients)
+      if (client.readyState === 1) client.send(JSON.stringify({ type: 'presence.changed' }));
+    return json({ ok: true });
+  }
+  if (path === '/__reaction') {
+    const message = messages.find((m) => m.id === body.message_id);
+    if (!message) return json({}, 404);
+    message.reactions = [...(message.reactions || []), [body.emoji, 'alex-123']];
+    message.revision++;
+    broadcast(message);
+    return json({ ok: true });
+  }
   if (path === '/__revoke') {
     for (const client of wss.clients)
       client.send(JSON.stringify({ type: 'subscription.revoked', channel_id: cid }));
@@ -184,6 +225,8 @@ const server = createServer(async (req, res) => {
   if (req.method !== 'GET' && req.headers['x-csrf-token'] !== 'fixture-csrf')
     return json({ detail: 'CSRF token missing.' }, 403);
   if (path === '/auth/me') return json(user);
+  if (path === '/presence')
+    return json({ available: presenceAvailable, users: presenceAvailable ? presenceUsers : [] });
   if (path === '/auth/refresh') return json({ user });
   if (path === '/auth/email-verification/request') return json({}, 202);
   if (path === '/auth/logout') {
@@ -288,6 +331,12 @@ const server = createServer(async (req, res) => {
     }
     return json(dm);
   }
+  if (path.startsWith('/direct-messages/')) {
+    const dm = channels.find(
+      (channel) => channel.direct_key && channel.id === path.split('/').at(-1),
+    );
+    return dm ? json(dm) : json({ detail: 'Conversation not found' }, 404);
+  }
   if (path.endsWith('/alerts') && req.method === 'GET') {
     return json({
       alerts: channels
@@ -355,6 +404,8 @@ const server = createServer(async (req, res) => {
       ).length,
     });
   }
+  if (path.endsWith('/read-receipts'))
+    return json({ readers: receiptPositions.get(path.split('/').at(-2)) || [] });
   if (path.includes('/reactions/')) {
     const message = messages.find((m) => m.id === path.split('/').at(-3));
     const emoji = decodeURIComponent(path.split('/').at(-1));
@@ -448,6 +499,7 @@ const server = createServer(async (req, res) => {
         workspace_id: wid,
         channel_id: channel,
         body: body.body,
+        document: body.document || null,
         attachments: (body.attachment_ids || []).map((id) => {
           const { data, channel, ...file } = uploads.get(id);
           return file;
@@ -474,11 +526,13 @@ const server = createServer(async (req, res) => {
     message.revision++;
     if (req.method === 'DELETE') {
       message.body = null;
+      message.document = null;
       message.deleted_at = new Date().toISOString();
       broadcast(message);
       return json({}, 204);
     }
     message.body = body.body;
+    message.document = body.document || null;
     message.edited_at = new Date().toISOString();
     broadcast(message);
     return json(withQuote(message));
@@ -504,6 +558,7 @@ wss.on('connection', (client) => {
   client.send(JSON.stringify({ type: 'hello', access_expires_at: '2027-01-01' }));
   client.on('message', (raw) => {
     const command = JSON.parse(String(raw));
+    if (command.type === 'typing') typingCommands.push(command);
     if (command.type === 'subscribe') {
       subscribers++;
       client.channel = command.channel_id;

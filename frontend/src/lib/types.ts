@@ -41,6 +41,7 @@ export type Message = {
   reactions?: [string, string][];
   quote?: MessageQuote | null;
   attachments?: Attachment[];
+  document?: import('./rich-text').RichDocument | null;
 };
 export type MessagePage = { messages: Message[]; next_before: string | null };
 export type Session = {

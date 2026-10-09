@@ -9,6 +9,7 @@ import {
   Info,
   Send,
   Smile,
+  Plus,
   X,
   MoreHorizontal,
   Pencil,
@@ -16,6 +17,7 @@ import {
   Trash2,
   WifiOff,
   Check,
+  CheckCheck,
   Archive,
   LogOut,
   MessageSquare,
@@ -34,9 +36,22 @@ import {
 } from '@/lib/types';
 import { useConversation } from '@/lib/use-conversation';
 import { quoteMessage } from '@/lib/messages';
-import { Alert, Avatar, Empty, Loading, Modal } from './ui';
+import { readersFor, typingLabel } from '@/lib/conversation-activity';
+import { Alert, Avatar, UserAvatar, OnlineLabel, Empty, Loading, Modal } from './ui';
 import { CallHistory, useCalls } from './calls';
-import { FilePicker, FilesPanel, MessageAttachments, type QueuedFile } from './files';
+import { FilePicker, FilesPanel, type QueuedFile } from './files';
+import type { Editor } from '@tiptap/core';
+import { RichEditor } from './rich-editor';
+import { RichMessage } from './rich-message';
+import {
+  attachmentKeys,
+  emptyDocument,
+  legacyDocument,
+  messageDocument,
+  plainText,
+  replaceAttachmentKeys,
+  type RichDocument,
+} from '@/lib/rich-text';
 
 export function Conversation({
   user,
@@ -131,6 +146,8 @@ function JoinedConversation({
   const memberName = useMemberName();
   const chat = useConversation(channel.workspace_id, channel.id);
   const calls = useCalls();
+  const peerId =
+    channel.direct_key?.split(':').find((id) => id !== user.id.replaceAll('-', '')) || '';
   const [tab, setTab] = useState('messages');
   const replyAction = useRef<(message: Message) => void>(() => {});
   const [highlighted, setHighlighted] = useState<string | null>(null);
@@ -144,6 +161,8 @@ function JoinedConversation({
   const list = useRef<HTMLDivElement>(null);
   const atBottom = useRef(true);
   const lastId = useRef('');
+  const markedRead = useRef('');
+  const markingRead = useRef(false);
   const visible = chat.messages.filter(
     (message) =>
       !filter ||
@@ -186,6 +205,9 @@ function JoinedConversation({
     const newest = chat.messages.at(-1);
     if (
       !newest ||
+      !chat.ready ||
+      markingRead.current ||
+      newest.id === markedRead.current ||
       document.visibilityState !== 'visible' ||
       !atBottom.current ||
       tab !== 'messages' ||
@@ -193,13 +215,17 @@ function JoinedConversation({
       filter
     )
       return;
+    markingRead.current = true;
     try {
       await api(`${channelPath(channel.workspace_id, channel.id)}/read-cursor`, 'PUT', {
         message_id: newest.id,
       });
+      markedRead.current = newest.id;
       window.dispatchEvent(new Event('klack:read'));
     } catch {
       /* Retry when the conversation is visible again. */
+    } finally {
+      markingRead.current = false;
     }
   }
   useEffect(() => {
@@ -211,7 +237,7 @@ function JoinedConversation({
       document.removeEventListener('visibilitychange', visible);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chat.messages, tab, filter, chat.browsingHistory]);
+  }, [chat.messages, chat.ready, tab, filter, chat.browsingHistory]);
   async function remove() {
     if (!deleting) return;
     setBusy(true);
@@ -251,11 +277,13 @@ function JoinedConversation({
                 {channel.name}
               </h1>
               <p>
-                {channel.archived_at
-                  ? 'Archived · Your conversations are still here.'
-                  : channel.direct_key
-                    ? 'A private conversation, just between the two of you.'
-                    : 'A place for ideas, feedback, and the details.'}
+                {channel.archived_at ? (
+                  'Archived · Your conversations are still here.'
+                ) : channel.direct_key ? (
+                  <OnlineLabel userId={peerId} />
+                ) : (
+                  'A place for ideas, feedback, and the details.'
+                )}
               </p>
             </div>
           </div>
@@ -415,7 +443,7 @@ function JoinedConversation({
                         id={`message-${message.id}`}
                         className={`message ${message.deleted_at ? 'deleted' : ''} ${highlighted === message.id ? 'message-highlight' : ''}`}
                       >
-                        <Avatar name={name} />
+                        <UserAvatar userId={message.author_user_id} name={name} />
                         <div className="message-content">
                           <header>
                             <strong>{name}</strong>
@@ -429,6 +457,26 @@ function JoinedConversation({
                               })}
                             </time>
                             {message.edited_at && !message.deleted_at && <small>edited</small>}
+                            {channel.direct_key &&
+                              message.author_user_id === user.id &&
+                              !message.deleted_at && (
+                                <span
+                                  className={`message-receipt ${readersFor(message, chat.readers, user.id).length ? 'read' : ''}`}
+                                  role="img"
+                                  aria-label={
+                                    readersFor(message, chat.readers, user.id).length
+                                      ? 'Read'
+                                      : 'Sent'
+                                  }
+                                  title={
+                                    readersFor(message, chat.readers, user.id).length
+                                      ? 'Read'
+                                      : 'Sent'
+                                  }
+                                >
+                                  <CheckCheck size={17} />
+                                </span>
+                              )}
                           </header>
                           {!message.deleted_at && message.quote && (
                             <QuotePreview
@@ -437,8 +485,7 @@ function JoinedConversation({
                               onClick={() => void jumpTo(message.quote!.id)}
                             />
                           )}
-                          <p>{message.deleted_at ? 'This message was deleted.' : message.body}</p>
-                          <MessageAttachments message={message} />
+                          <RichMessage message={message} />
                           <Reactions
                             message={message}
                             user={user}
@@ -498,6 +545,11 @@ function JoinedConversation({
                 })
               )}
             </div>
+            <div className="typing-indicator" role="status" aria-live="polite">
+              {typingLabel(
+                chat.typingUsers.filter((id) => id !== user.id).map((id) => memberName(id, user)),
+              )}
+            </div>
             {channel.archived_at ? (
               <div className="archived-banner">
                 <Archive size={18} />
@@ -509,6 +561,7 @@ function JoinedConversation({
               </div>
             ) : (
               <Composer
+                typing={chat.typing}
                 user={user}
                 channel={channel}
                 sent={(message) => {
@@ -539,13 +592,30 @@ function JoinedConversation({
             </button>
           </header>
           <div className="detail-content">
-            <Avatar name={memberName(selected.author_user_id, user)} />
+            <UserAvatar
+              userId={selected.author_user_id}
+              name={memberName(selected.author_user_id, user)}
+            />
             <h3>{memberName(selected.author_user_id, user)}</h3>
             <time>{new Date(selected.created_at).toLocaleString()}</time>
-            <p className="message-body">
-              {selected.deleted_at ? 'This message was deleted.' : selected.body}
-            </p>
-            <MessageAttachments message={selected} />
+            <RichMessage message={selected} />
+            {!channel.direct_key && selected.author_user_id === user.id && !selected.deleted_at && (
+              <div className="message-readers">
+                <h3>Read by</h3>
+                {chat.receiptsError ? (
+                  <p className="muted">{chat.receiptsError}</p>
+                ) : readersFor(selected, chat.readers, user.id).length ? (
+                  readersFor(selected, chat.readers, user.id).map((reader) => (
+                    <div className="message-reader" key={reader.user_id}>
+                      <Avatar name={memberName(reader.user_id, user)} small />
+                      <span>{memberName(reader.user_id, user)}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="muted">No one else has read this message yet.</p>
+                )}
+              </div>
+            )}
             <div className="detail-note">
               <Quote size={22} />
               <strong>Keep the conversation going</strong>
@@ -574,15 +644,17 @@ function JoinedConversation({
       )}
       {editing && (
         <Modal title="Edit message" close={() => setEditing(null)}>
-          <form
-            className="form-stack"
-            onSubmit={async (event) => {
-              event.preventDefault();
+          <EditRichMessage
+            message={editing}
+            busy={busy}
+            error={error}
+            save={async (document, body) => {
               setBusy(true);
               setError('');
               try {
                 const message = await api<Message>(`${chat.path}/${editing.id}`, 'PATCH', {
-                  body: new FormData(event.currentTarget).get('body'),
+                  body,
+                  document,
                 });
                 chat.merge([message]);
                 setEditing(null);
@@ -592,23 +664,7 @@ function JoinedConversation({
                 setBusy(false);
               }
             }}
-          >
-            <Alert>{error}</Alert>
-            <label>
-              Message
-              <textarea
-                name="body"
-                defaultValue={editing.body || ''}
-                maxLength={4000}
-                required={!editing.attachments?.length}
-                autoFocus
-                rows={5}
-              />
-            </label>
-            <button className="primary" disabled={busy}>
-              {busy ? 'Saving…' : 'Save changes'}
-            </button>
-          </form>
+          />
         </Modal>
       )}
       {deleting && (
@@ -668,14 +724,72 @@ function QuotePreview({
   );
 }
 
+function EditRichMessage({
+  message,
+  busy,
+  error,
+  save,
+}: {
+  message: Message;
+  busy: boolean;
+  error: string;
+  save: (document: RichDocument, body: string) => Promise<void>;
+}) {
+  const [document, setDocument] = useState(() => messageDocument(message));
+  const files: QueuedFile[] = (message.attachments || []).map((file) => ({
+    key: file.id,
+    filename: file.filename,
+    size: file.size,
+    attachment: file,
+  }));
+  const body = plainText(document).trim();
+  const keys = attachmentKeys(document);
+  const intact = keys.length === files.length && files.every((file) => keys.includes(file.key));
+  return (
+    <form
+      className="form-stack"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (intact && body.length <= 4000) void save(document, body);
+      }}
+    >
+      <Alert>{error}</Alert>
+      <RichEditor
+        document={document}
+        change={setDocument}
+        label="Message"
+        placeholder="Edit message…"
+        locked={busy}
+        files={files}
+        preserveFiles
+        path={`${channelPath(message.workspace_id, message.channel_id)}/files`}
+      />
+      {!intact && (
+        <Alert>
+          Keep the existing attachments in this message. Undo to restore a removed attachment.
+        </Alert>
+      )}
+      {body.length > 4000 && <Alert>Keep the message within 4,000 characters.</Alert>}
+      <button
+        className="primary"
+        disabled={busy || !intact || body.length > 4000 || (!body && !files.length)}
+      >
+        {busy ? 'Saving…' : 'Save changes'}
+      </button>
+    </form>
+  );
+}
+
 type Draft = {
   body: string;
+  document?: RichDocument;
   id: string;
   attempted: boolean;
   files?: QueuedFile[];
   quote?: MessageQuote;
 };
 function Composer({
+  typing,
   user,
   channel,
   sent,
@@ -683,6 +797,7 @@ function Composer({
   messages,
   registerReply,
 }: {
+  typing: (active: boolean) => void;
   user: User;
   channel: Channel;
   sent: (message: Message) => void;
@@ -697,6 +812,14 @@ function Composer({
       if (stored && typeof stored.body === 'string' && typeof stored.id === 'string')
         return {
           ...stored,
+          document:
+            stored.document ||
+            (stored.attempted
+              ? undefined
+              : legacyDocument(
+                  stored.body,
+                  (stored.files || []).map((file: QueuedFile) => file.key),
+                )),
           files: (stored.files || []).map((file: QueuedFile) =>
             file.attachment
               ? file
@@ -708,17 +831,60 @@ function Composer({
           ),
         };
     } catch {}
-    return { body: '', id: crypto.randomUUID(), attempted: false };
+    return { body: '', document: emptyDocument(), id: crypto.randomUUID(), attempted: false };
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [emoji, setEmoji] = useState(false);
-  const input = useRef<HTMLTextAreaElement>(null);
+  const input = useRef<Editor | null>(null);
+  const fileActions = useRef({ retry: (_key: string) => {}, remove: (_key: string) => {} });
   const sending = useRef(false);
   const acceptFiles = useRef<(files: File[]) => void>(() => {});
   const files = draft.files || [];
-  const filesReady = files.every((file) => !!file.attachment);
-  const canSend = filesReady && (!!draft.body.trim() || files.length > 0);
+  const effectiveDocument =
+    draft.document ||
+    legacyDocument(
+      draft.body,
+      files.map((file) => file.key),
+    );
+  const placedKeys = attachmentKeys(effectiveDocument);
+  const placedFiles = placedKeys.map((key) => files.find((file) => file.key === key));
+  const filesReady = placedFiles.every((file) => !!file?.attachment);
+  const canSend =
+    filesReady &&
+    (!!draft.body.trim() || placedKeys.length > 0) &&
+    draft.body.length <= 4000 &&
+    JSON.stringify(effectiveDocument).length <= 64000;
+  const editorFiles = (
+    <FilePicker
+      inline
+      path={`${channelPath(channel.workspace_id, channel.id)}/files`}
+      entries={files}
+      locked={draft.attempted || busy}
+      registerInput={(accept) => {
+        acceptFiles.current = accept;
+      }}
+      registerActions={(actions) => {
+        fileActions.current = actions;
+      }}
+      added={(added) => {
+        input.current
+          ?.chain()
+          .focus()
+          .insertContent([
+            ...added.map((file) => ({ type: 'attachment', attrs: { id: file.key } })),
+            { type: 'paragraph' },
+          ])
+          .run();
+      }}
+      change={(change) =>
+        setDraft((current) => ({
+          ...current,
+          files: typeof change === 'function' ? change(current.files || []) : change,
+        }))
+      }
+    />
+  );
   useEffect(() => {
     registerReply((message) => {
       if (draft.attempted || sending.current) {
@@ -726,7 +892,7 @@ function Composer({
         return;
       }
       setDraft((current) => ({ ...current, quote: quoteMessage(message) }));
-      input.current?.focus();
+      input.current?.commands.focus();
     });
   });
   useEffect(() => {
@@ -768,6 +934,7 @@ function Composer({
     event?.preventDefault();
     if (!canSend || sending.current) return;
     sending.current = true;
+    typing(false);
     setBusy(true);
     setError('');
     const pending = { ...draft, attempted: true };
@@ -778,17 +945,38 @@ function Composer({
     try {
       const message = await api<Message>(path, 'POST', {
         body: draft.body,
+        ...(draft.document
+          ? {
+              document: replaceAttachmentKeys(
+                draft.document,
+                new Map(placedFiles.map((file) => [file!.key, file!.attachment!.id])),
+              ),
+            }
+          : {}),
         client_message_id: draft.id,
-        ...(files.length ? { attachment_ids: files.map((file) => file.attachment!.id) } : {}),
+        ...(placedFiles.length
+          ? { attachment_ids: placedFiles.map((file) => file!.attachment!.id) }
+          : {}),
         ...(draft.quote ? { reply_to_message_id: draft.quote.id } : {}),
       });
       sent(message);
-      const empty = { body: '', id: crypto.randomUUID(), attempted: false };
+      for (const file of files)
+        if (!placedKeys.includes(file.key) && file.attachment)
+          void api(
+            `${channelPath(channel.workspace_id, channel.id)}/files/${file.attachment.id}`,
+            'DELETE',
+          ).catch(() => {});
+      const empty = {
+        body: '',
+        document: emptyDocument(),
+        id: crypto.randomUUID(),
+        attempted: false,
+      };
       setDraft(empty);
       try {
         sessionStorage.removeItem(storageKey);
       } catch {}
-      input.current?.focus();
+      input.current?.commands.focus();
     } catch (failure) {
       setError(errorMessage(failure));
       // A definite rejection did not commit a message; allow the draft to be corrected.
@@ -807,17 +995,29 @@ function Composer({
   return (
     <div
       className="composer-wrap"
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) typing(false);
+      }}
       onDragOver={(event) => {
         if (event.dataTransfer.types.includes('Files')) event.preventDefault();
       }}
-      onDrop={(event) => {
+      onDropCapture={(event) => {
+        const dropped = Array.from(event.dataTransfer.files);
+        if (!dropped.length || draft.attempted || busy) return;
         event.preventDefault();
-        acceptFiles.current(Array.from(event.dataTransfer.files));
+        event.stopPropagation();
+        const position = input.current?.view.posAtCoords({
+          left: event.clientX,
+          top: event.clientY,
+        });
+        if (position) input.current?.commands.setTextSelection(position.pos);
+        acceptFiles.current(dropped);
       }}
-      onPaste={(event) => {
+      onPasteCapture={(event) => {
         const pasted = Array.from(event.clipboardData.files);
         if (pasted.length) {
           event.preventDefault();
+          event.stopPropagation();
           acceptFiles.current(pasted);
         }
       }}
@@ -844,57 +1044,46 @@ function Composer({
               disabled={draft.attempted || busy}
               onClick={() => {
                 setDraft((current) => ({ ...current, quote: undefined }));
-                input.current?.focus();
+                input.current?.commands.focus();
               }}
             >
               <X size={18} />
             </button>
           </div>
         )}
-        <div className="composer-toolbar">
-          <MessageSquare size={16} />
-          <strong>Message</strong>
-          <span>Make a little progress, together.</span>
-        </div>
-        <textarea
-          ref={input}
-          aria-label={`Message ${channel.name}`}
+        <RichEditor
+          document={effectiveDocument}
+          label={`Message ${channel.name}`}
           placeholder={
             draft.quote
               ? 'Write a reply…'
               : `Message ${channel.direct_key ? '' : '#'}${channel.name}`
           }
-          maxLength={4000}
-          value={draft.body}
-          readOnly={draft.attempted}
-          onChange={(event) => setDraft({ ...draft, body: event.target.value })}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-              event.preventDefault();
-              void submit();
-            }
-          }}
-        />
-        <FilePicker
-          path={`${channelPath(channel.workspace_id, channel.id)}/files`}
-          entries={files}
           locked={draft.attempted || busy}
-          registerInput={(accept) => {
-            acceptFiles.current = accept;
+          files={files}
+          path={`${channelPath(channel.workspace_id, channel.id)}/files`}
+          register={(editor) => {
+            input.current = editor;
           }}
-          change={(change) =>
-            setDraft((current) => ({
-              ...current,
-              files: typeof change === 'function' ? change(current.files || []) : change,
-            }))
-          }
+          retry={(key) => fileActions.current.retry(key)}
+          remove={(key) => fileActions.current.remove(key)}
+          change={(document, body) => {
+            if (!draft.attempted) typing(!!body.trim());
+            setDraft((current) => (current.attempted ? current : { ...current, document, body }));
+          }}
+          send={() => void submit()}
         />
+        {draft.body.length > 4000 && (
+          <div className="editor-limit" role="alert">
+            Message is too long. Keep it within 4,000 characters.
+          </div>
+        )}
         <div className="composer-bottom">
           <div className="emoji-control">
             <button
               type="button"
               className="icon-button"
-              disabled={draft.attempted}
+              disabled={draft.attempted || busy}
               aria-label="Add emoji"
               aria-expanded={emoji}
               onClick={() => setEmoji(!emoji)}
@@ -908,9 +1097,13 @@ function Composer({
                     type="button"
                     key={value}
                     onClick={() => {
-                      setDraft({ ...draft, body: `${draft.body}${value}`.slice(0, 4000) });
+                      input.current
+                        ?.chain()
+                        .focus()
+                        .insertContent({ type: 'text', text: value })
+                        .run();
                       setEmoji(false);
-                      input.current?.focus();
+                      input.current?.commands.focus();
                     }}
                   >
                     {value}
@@ -918,9 +1111,12 @@ function Composer({
                 ))}
               </div>
             )}
-            <span className="composer-hint">Shift + Enter for a new line</span>
+            <span className="composer-hint">
+              Shift + Enter for a new line · Ctrl/⌘ + Enter to send
+            </span>
           </div>
           <div className="send-controls">
+            {editorFiles}
             {draft.body.length > 3600 && <small>{draft.body.length}/4000</small>}
             <button
               className="primary send-button"
@@ -1140,40 +1336,103 @@ function Reactions({
 }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const container = useRef<HTMLDivElement>(null);
+  const trigger = useRef<HTMLButtonElement>(null);
+  const picker = useRef<HTMLDivElement>(null);
+  const emojis = ['👍', '❤️', '😂', '🎉', '👀', '✅'];
+
+  useEffect(() => {
+    if (!pickerOpen) return;
+    picker.current?.querySelector('button')?.focus();
+    const outside = (event: PointerEvent) => {
+      if (!container.current?.contains(event.target as Node)) setPickerOpen(false);
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setPickerOpen(false);
+        trigger.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', outside);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [pickerOpen]);
+
+  async function toggle(emoji: string) {
+    const mine = (message.reactions || []).some((r) => r[0] === emoji && r[1] === user.id);
+    setBusy(true);
+    setError('');
+    try {
+      changed(
+        await api<Message>(
+          `${path}/${message.id}/reactions/${encodeURIComponent(emoji)}`,
+          mine ? 'DELETE' : 'PUT',
+        ),
+      );
+      if (pickerOpen) {
+        setPickerOpen(false);
+        trigger.current?.focus();
+      }
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
   if (message.deleted_at) return null;
   return (
-    <div className="reactions" aria-label="Message reactions">
-      {['👍', '❤️', '😂', '🎉', '👀', '✅'].map((emoji) => {
-        const rows = (message.reactions || []).filter((r) => r[0] === emoji);
-        const mine = rows.some((r) => r[1] === user.id);
-        return (
-          <button
-            key={emoji}
-            aria-label={`${mine ? 'Remove' : 'Add'} ${emoji} reaction`}
-            aria-pressed={mine}
-            disabled={disabled || busy}
-            onClick={async () => {
-              setBusy(true);
-              setError('');
-              try {
-                changed(
-                  await api<Message>(
-                    `${path}/${message.id}/reactions/${encodeURIComponent(emoji)}`,
-                    mine ? 'DELETE' : 'PUT',
-                  ),
-                );
-              } catch (failure) {
-                setError(errorMessage(failure));
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            {emoji}
-            {rows.length ? ` ${rows.length}` : ''}
-          </button>
-        );
-      })}
+    <div className="reaction-control" ref={container}>
+      <div className="reactions" aria-label="Message reactions">
+        {emojis.map((emoji) => {
+          const rows = (message.reactions || []).filter((r) => r[0] === emoji);
+          if (!rows.length) return null;
+          const mine = rows.some((r) => r[1] === user.id);
+          return (
+            <button
+              key={emoji}
+              className="reaction-chip"
+              aria-label={`${mine ? 'Remove' : 'Add'} ${emoji} reaction`}
+              aria-pressed={mine}
+              disabled={disabled || busy}
+              onClick={() => void toggle(emoji)}
+            >
+              {emoji}
+              {rows.length ? ` ${rows.length}` : ''}
+            </button>
+          );
+        })}
+        <button
+          ref={trigger}
+          className="reaction-add"
+          aria-label="Add reaction"
+          aria-expanded={pickerOpen}
+          aria-haspopup="dialog"
+          disabled={disabled}
+          onClick={() => setPickerOpen(!pickerOpen)}
+        >
+          <Smile size={18} />
+          <Plus size={10} className="reaction-plus" />
+        </button>
+      </div>
+      {pickerOpen && (
+        <div ref={picker} className="reaction-picker" role="dialog" aria-label="Choose a reaction">
+          {emojis.map((emoji) => (
+            <button
+              key={emoji}
+              aria-label={`${(message.reactions || []).some((r) => r[0] === emoji && r[1] === user.id) ? 'Remove' : 'Add'} ${emoji} reaction`}
+              disabled={disabled || busy}
+              onClick={() => void toggle(emoji)}
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      )}
       <Alert>{error}</Alert>
     </div>
   );

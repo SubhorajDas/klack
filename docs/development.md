@@ -95,7 +95,7 @@ Keep an existing `.env` instead of copying over it, and configure browser origin
 
 ```powershell
 Copy-Item .env.example .env
-docker compose up -d postgres
+docker compose up -d postgres redis
 uv sync --project backend --locked
 uv run --project backend alembic -c backend/alembic.ini upgrade head
 uv run --project backend uvicorn klack.main:create_app --factory --reload --no-access-log
@@ -116,6 +116,13 @@ PostgreSQL integration tests are opt-in through `RUN_INTEGRATION_TESTS=1`. They 
 identity, workspaces, channels, conversations, messages, calls, and concurrency. Use a disposable
 test database: integration fixtures modify schema and data. Inspect the fixtures before choosing
 a database URL; do not target a database containing data you need to keep.
+
+Set `REDIS_URL` to a disposable Redis database when running integrations. Redis tests cover
+cross-client typing/read broadcasts, multiple-device online leases, and expiry after crashes.
+Compose starts Redis on localhost port 6379; host development reads `REDIS_URL` from `.env`,
+while the Compose API uses the internal `redis` service. Production should configure a private
+Redis service (TLS via `rediss://` where applicable). A Redis outage leaves message/history
+operations available and reports online status as unavailable.
 
 ## Migrations
 

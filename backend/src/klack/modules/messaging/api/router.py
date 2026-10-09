@@ -39,6 +39,7 @@ async def create_message(
         workspace_id=workspace_id,
         channel_id=channel_id,
         body=payload.body,
+        **({"document": payload.document} if payload.document is not None else {}),
         client_message_id=payload.client_message_id,
         reply_to_message_id=payload.reply_to_message_id,
         attachment_ids=tuple(payload.attachment_ids),
@@ -94,6 +95,7 @@ async def edit_message(
         channel_id=channel_id,
         message_id=message_id,
         body=payload.body,
+        **({"document": payload.document} if payload.document is not None else {}),
     )
     response.headers["Cache-Control"] = "no-store"
     return MessageResponse.from_domain(message)
