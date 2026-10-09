@@ -688,6 +688,55 @@ test('quoted replies, reactions, and direct messages work through the browser', 
   await expect(page.getByRole('heading', { name: 'Direct messages' })).toBeVisible();
 });
 
+test('direct messages keep readable panes and adjacent avatars across window widths', async ({
+  page,
+}) => {
+  await page.route('**/api/v1/contacts', async (route) => {
+    const response = await route.fetch();
+    const data = await response.json();
+    await route.fulfill({
+      response,
+      json: {
+        memberships: data.memberships.map((member: { user_id: string }) =>
+          member.user_id === 'alex-123'
+            ? { ...member, display_name: 'subhorajdas088-with-a-long-display-name' }
+            : member,
+        ),
+      },
+    });
+  });
+  await login(page);
+  await page.getByRole('button', { name: 'Direct messages', exact: true }).click();
+  await page.getByRole('button', { name: 'New direct message' }).click();
+  await page.getByLabel('Start a conversation').selectOption('alex-123');
+  await page.getByRole('button', { name: 'Open conversation' }).click();
+  for (const width of [390, 500, 760, 1000, 1060, 1440]) {
+    await page.setViewportSize({ width, height: 800 });
+    const layout = page.locator('.dm-layout');
+    const inbox = layout.locator('.dm-inbox');
+    const compact = (await layout.boundingBox())!.width <= 760;
+    if (compact) await expect(inbox).toBeHidden();
+    else await expect(inbox).toBeVisible();
+    await expect(layout.locator('.composer .rich-editor-input')).toBeVisible();
+    const header = layout.locator('.channel-header');
+    expect((await header.boundingBox())!.height).toBeLessThan(120);
+    expect(await header.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await page.screenshot({ path: `test-results/dm-responsive-${width}.png` });
+    await page.getByRole('button', { name: 'Back to direct messages', exact: true }).click();
+    await expect(inbox).toBeVisible();
+    const row = inbox.locator('.dm-list > button').first();
+    const avatar = (await row.locator('.user-avatar').boundingBox())!;
+    const name = (await row.locator('.dm-peer').boundingBox())!;
+    expect(name.x - (avatar.x + avatar.width)).toBeGreaterThanOrEqual(8);
+    expect(name.x - (avatar.x + avatar.width)).toBeLessThanOrEqual(12);
+    await row.click();
+    await expect(layout.locator('.composer .rich-editor-input')).toBeVisible();
+  }
+});
+
 test('quoted drafts survive reload, retries keep their quote, and deletion redacts previews', async ({
   page,
   request,

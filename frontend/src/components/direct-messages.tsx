@@ -152,7 +152,7 @@ export function DirectMessages({
                 onClick={() => select(c.id)}
               >
                 <UserAvatar userId={peerId(c)} name={named(c).name} />
-                <span>
+                <span className="dm-peer">
                   <strong>{named(c).name}</strong>
                   <small>
                     <OnlineLabel userId={peerId(c)} />

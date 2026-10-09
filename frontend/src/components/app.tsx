@@ -7,6 +7,7 @@ import { Auth } from './auth';
 import { WorkspaceApp } from './workspace-app';
 import { CallsProvider } from './calls';
 import { Alert, Loading, Logo } from './ui';
+import { applyTheme, readTheme, themeStorageKey } from '@/lib/themes';
 
 export function App() {
   const path = usePathname();
@@ -16,6 +17,14 @@ export function App() {
   const [error, setError] = useState('');
   const [attempt, setAttempt] = useState(0);
   const pendingInvite = useRef<string | null>(null);
+  useEffect(() => {
+    applyTheme(readTheme());
+    const syncTheme = (event: StorageEvent) => {
+      if (event.key === themeStorageKey || event.key === null) applyTheme(readTheme());
+    };
+    window.addEventListener('storage', syncTheme);
+    return () => window.removeEventListener('storage', syncTheme);
+  }, []);
   useEffect(() => {
     if (path === '/join')
       pendingInvite.current = new URLSearchParams(window.location.hash.slice(1)).get('token');

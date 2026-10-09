@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import { themes, readTheme, saveTheme, themeStorageKey, type ThemeId } from '@/lib/themes';
 import {
   Users,
   Plus,
@@ -430,11 +431,18 @@ export function Account({
   const [notice, setNotice] = useState('');
   const [busy, setBusy] = useState(false);
   const [compact, setCompact] = useState(false);
+  const [theme, setTheme] = useState<ThemeId>('light');
   const [revoke, setRevoke] = useState<Session | null>(null);
   useEffect(() => {
+    setTheme(readTheme());
+    const syncTheme = (event: StorageEvent) => {
+      if (event.key === themeStorageKey || event.key === null) setTheme(readTheme());
+    };
+    window.addEventListener('storage', syncTheme);
     try {
       setCompact(localStorage.getItem('klack:compact') === 'true');
     } catch {}
+    return () => window.removeEventListener('storage', syncTheme);
   }, []);
   useEffect(() => {
     if (tab !== 'security') return;
@@ -557,7 +565,49 @@ export function Account({
           ) : tab === 'appearance' ? (
             <>
               <h2>Appearance</h2>
-              <p className="muted">A little more room, or a little less scrolling.</p>
+              <p className="muted">Choose the colors that feel like home. Saved on this browser.</p>
+              <fieldset className="theme-picker">
+                <legend>Theme</legend>
+                <div className="theme-grid">
+                  {themes.map((option) => (
+                    <label className="theme-option" key={option.id}>
+                      <input
+                        type="radio"
+                        name="theme"
+                        value={option.id}
+                        checked={theme === option.id}
+                        onChange={() => {
+                          setTheme(option.id);
+                          saveTheme(option.id);
+                        }}
+                      />
+                      <span className="theme-card">
+                        <span className="theme-swatch" data-theme={option.id} aria-hidden="true">
+                          <span className="theme-swatch-sidebar">
+                            <i />
+                            <i />
+                            <i />
+                          </span>
+                          <span className="theme-swatch-content">
+                            <i />
+                            <i />
+                            <i />
+                            <b />
+                          </span>
+                        </span>
+                        <span className="theme-card-heading">
+                          <strong>{option.name}</strong>
+                          {theme === option.id && <Check size={15} aria-hidden="true" />}
+                        </span>
+                        <small>{option.description}</small>
+                      </span>
+                    </label>
+                  ))}
+                </div>
+              </fieldset>
+              <p className="theme-status" role="status">
+                {themes.find((option) => option.id === theme)?.name} theme selected
+              </p>
               <label className="setting-row">
                 <span>
                   <strong>Compact messages</strong>

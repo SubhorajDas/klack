@@ -274,7 +274,7 @@ function JoinedConversation({
             <div>
               <h1>
                 {channel.visibility === 'private' ? <Lock size={24} /> : <Hash size={26} />}{' '}
-                {channel.name}
+                <span className="channel-name">{channel.name}</span>
               </h1>
               <p>
                 {channel.archived_at ? (

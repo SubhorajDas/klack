@@ -1,6 +1,8 @@
 import type { Metadata } from 'next';
 import { App } from '@/components/app';
+import { themeBootstrap } from '@/lib/themes';
 import './globals.css';
+import './themes.css';
 export const metadata: Metadata = {
   title: 'Klack — Your team, in sync',
   description: 'A calmer place for your team to connect and collaborate.',
@@ -8,7 +10,10 @@ export const metadata: Metadata = {
 };
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeBootstrap }} />
+      </head>
       <body>
         <App />
         {children}
