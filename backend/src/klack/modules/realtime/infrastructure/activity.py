@@ -70,6 +70,9 @@ class RedisActivity:
     def start(
         self, receive: Callable[[str], None], restore: Callable[[], Awaitable[None]] | None = None
     ) -> None:
+        if self.client is None:
+            logger.warning("redis_activity_unconfigured", required_setting="REDIS_URL")
+            return
         if self.client is not None and self._task is None:
             self._task = asyncio.create_task(self._listen(receive, restore))
 

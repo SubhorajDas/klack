@@ -1,7 +1,8 @@
 # Free Render beta deployment
 
 Klack runs its Next.js frontend, FastAPI backend, email worker, and file cleanup worker
-in one Docker web service. PostgreSQL and private uploads live in Supabase. The public
+in one Docker web service. A separate Render Key Value instance provides Redis-compatible
+typing broadcasts and online leases. PostgreSQL and private uploads live in Supabase. The public
 frontend proxies API requests and WebSockets to the backend, keeping authentication on
 one origin. Render's local filesystem holds no durable application data.
 
@@ -18,8 +19,9 @@ that branch of `SubhorajDas/klack`:
 | Instance type | Free |
 | Health check path | `/health/ready` |
 
-Alternatively, create a Blueprint using the checked-in `render.yaml`. That file sets
-the non-secret defaults and generates four distinct application secrets. For a manually
+Alternatively, create a Blueprint using the checked-in `render.yaml`. It provisions a
+free Key Value instance, connects its private URL as `REDIS_URL`, sets the non-secret
+defaults, and generates four distinct application secrets. For a manually
 created service, copy its environment settings and generate those four secrets yourself
 (at least 32 random characters each).
 
@@ -44,6 +46,7 @@ recorded in [Render beta latency improvement](../performance/render-beta-latency
 | Variable | Value |
 | --- | --- |
 | `DATABASE_URL` | Supabase **Session pooler** URL, port 5432, using `postgresql+asyncpg://` |
+| `REDIS_URL` | Render Key Value **Internal Connection URL**, from the same workspace and region as the web service |
 | `SUPABASE_URL` | Project origin, `https://<project-ref>.supabase.co`, without `/rest/v1/` |
 | `SUPABASE_SERVICE_ROLE_KEY` | Server-only Supabase service-role key |
 | `AUTH_TRUSTED_ORIGIN` | Exact Render service URL, e.g. `https://klack-example.onrender.com` |
@@ -60,6 +63,32 @@ build/start command or a Render Postgres database. Keep the Supabase bucket `kla
 private with its size limit matching `FILES_MAX_BYTES=10485760` (10 MiB). Bucket MIME
 restrictions may remain empty to support ZIP files; Klack handles access and previews.
 
+## Connect Redis to an existing web service
+
+Creating or updating a web service directly from GitHub does not apply the Blueprint's
+Key Value definition. For the existing `klack-x1h7.onrender.com` deployment:
+
+1. In Render, create a **Key Value** instance named `klack-realtime` using the **Free**
+   plan in the same workspace and region as Klack. Choose **noeviction** as the memory
+   policy and leave external access disabled.
+2. Copy its **Internal Connection URL**. In the existing Klack web service's
+   **Environment** page, set `REDIS_URL` to that exact URL and `REALTIME_ENABLED=true`.
+   Do not use the local development URL (`redis://127.0.0.1:6379/0`): the Docker web
+   image does not run Redis.
+3. Choose **Save and deploy**. This restarts the service with the new settings; it
+   does not require an application code change or database migration.
+4. Sign in with two separate browser sessions. Their authenticated
+   `/api/v1/presence` responses should report `available: true`. Keep both sessions
+   connected, open the same DM or channel, and check online status and typing in both
+   directions. Closing one user's final session should mark them offline; an abrupt
+   connection loss expires after the online lease (75 seconds by default).
+
+`available: false` means Redis is unconfigured, unreachable, or still reconnecting.
+Check the service logs for `redis_activity_unconfigured` or
+`redis_activity_unavailable`. WebSocket `hello` and normal messages can still work
+while Redis is unavailable, because message delivery uses PostgreSQL separately.
+Read receipts remain stored in PostgreSQL; Redis carries their live refresh events.
+
 ## Demo limitations
 
 - `FILES_SCAN_REQUIRED=false`: attachments are **not antivirus-scanned**. ZIP files are
@@ -70,6 +99,8 @@ restrictions may remain empty to support ZIP files; Klack handles access and pre
 - Each workspace has a 100 MiB upload quota in this deployment. Supabase's shared storage
   and database allowances still apply across all workspaces; monitor usage in its dashboard.
 - All processes share the free service's memory. This setup targets a small resume demo.
+- Free Key Value data is ephemeral. Online leases rebuild after a Redis restart;
+  typing events are transient. Messages and read receipts remain in PostgreSQL.
 
 ## Check after deployment
 
@@ -80,4 +111,6 @@ and confirm messages and files remain available. Check logs for worker startup a
 intentional `file_antivirus_scanning_disabled` warning.
 
 References: [Render free services](https://render.com/docs/free),
+[Render Key Value](https://render.com/docs/key-value),
+[Render Blueprint reference](https://render.com/docs/blueprint-spec),
 [Brevo SMTP ports](https://help.brevo.com/hc/en-us/articles/10905415650322-Which-SMTP-port-should-I-use-Port-587-465-or-2525).

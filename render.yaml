@@ -1,4 +1,9 @@
 services:
+  - type: keyvalue
+    name: klack-realtime
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList: []
   - type: web
     name: klack
     runtime: docker
@@ -23,6 +28,11 @@ services:
         value: "0"
       - key: REALTIME_ENABLED
         value: "true"
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: klack-realtime
+          property: connectionString
       - key: REALTIME_MAX_CONNECTIONS
         value: "100"
       - key: FILES_STORAGE
