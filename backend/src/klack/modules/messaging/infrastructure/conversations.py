@@ -18,7 +18,10 @@ from klack.modules.channels.infrastructure.repository import SqlAlchemyChannelRe
 from klack.modules.identity.infrastructure.models import UserRecord
 from klack.modules.messaging.domain.entities import Message
 from klack.modules.messaging.infrastructure.models import (
+    MentionRecord,
     MessageRecord,
+    NotificationPauseRecord,
+    NotificationPreferenceRecord,
     ReactionRecord,
     ReadCursorRecord,
 )
@@ -85,8 +88,37 @@ class SqlAlchemyConversationRepository:
         )
         return [SqlAlchemyChannelRepository._channel(row) for row in rows]
 
-    def _unread(self, workspace_id: UUID | None, actor: UUID) -> Subquery:
+    def _unread(
+        self, workspace_id: UUID | None, actor: UUID, *, notifications: bool = False
+    ) -> Subquery:
         previous = aliased(MessageRecord)
+        filters = []
+        if notifications:
+            policy = (
+                select(NotificationPreferenceRecord.mode)
+                .where(
+                    NotificationPreferenceRecord.channel_id == MessageRecord.channel_id,
+                    NotificationPreferenceRecord.user_id == actor,
+                )
+                .scalar_subquery()
+            )
+            mentioned = (
+                select(MentionRecord.message_id)
+                .where(MentionRecord.message_id == MessageRecord.id, MentionRecord.user_id == actor)
+                .exists()
+            )
+            paused = (
+                select(NotificationPauseRecord.user_id)
+                .where(
+                    NotificationPauseRecord.user_id == actor,
+                    NotificationPauseRecord.paused_until > datetime.now(UTC),
+                )
+                .exists()
+            )
+            filters = [
+                ~paused,
+                or_(policy.is_(None), policy == "all", and_(policy == "mentions", mentioned)),
+            ]
         unread = (
             select(
                 MessageRecord.id.label("message_id"),
@@ -129,6 +161,7 @@ class SqlAlchemyConversationRepository:
                     )
                     .exists(),
                 ),
+                *filters,
                 MessageRecord.author_user_id != actor,
                 MessageRecord.deleted_at.is_(None),
                 or_(
@@ -166,7 +199,7 @@ class SqlAlchemyConversationRepository:
     async def alerts(
         self, workspace_id: UUID | None, actor: UUID
     ) -> list[tuple[Channel, Message, int]]:
-        unread = self._unread(workspace_id, actor)
+        unread = self._unread(workspace_id, actor, notifications=True)
         rows = (
             await self.session.execute(
                 select(ChannelRecord, MessageRecord, unread.c.unread_count)

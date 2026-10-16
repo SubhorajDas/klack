@@ -44,6 +44,12 @@ import type { Editor } from '@tiptap/core';
 import { RichEditor } from './rich-editor';
 import { RichMessage } from './rich-message';
 import {
+  ConversationNotifications,
+  MessageCollection,
+  MessageMarkActions,
+  useMessageMarks,
+} from './message-organization';
+import {
   attachmentKeys,
   emptyDocument,
   legacyDocument,
@@ -145,6 +151,8 @@ function JoinedConversation({
 }) {
   const memberName = useMemberName();
   const chat = useConversation(channel.workspace_id, channel.id);
+  const organization = useMessageMarks(channel);
+  const initialJump = useRef(false);
   const calls = useCalls();
   const peerId =
     channel.direct_key?.split(':').find((id) => id !== user.id.replaceAll('-', '')) || '';
@@ -180,6 +188,7 @@ function JoinedConversation({
   }, [chat.messages]);
   async function jumpTo(id: string) {
     setError('');
+    setTab('messages');
     if (filter && !visible.some((m) => m.id === id)) {
       setError('Clear the search to view the original message.');
       return;
@@ -195,12 +204,18 @@ function JoinedConversation({
     element.scrollIntoView({ block: 'center', behavior: 'smooth' });
     setHighlighted(jumpTarget);
     setJumpTarget(null);
-  }, [chat.messages, jumpTarget]);
+  }, [chat.messages, jumpTarget, tab]);
   useEffect(() => {
     if (!highlighted) return;
     const timer = setTimeout(() => setHighlighted(null), 1800);
     return () => clearTimeout(timer);
   }, [highlighted]);
+  useEffect(() => {
+    if (!chat.ready || initialJump.current) return;
+    initialJump.current = true;
+    const target = new URLSearchParams(window.location.search).get('message');
+    if (target) void jumpTo(target);
+  }, [chat.ready]);
   async function markRead() {
     const newest = chat.messages.at(-1);
     if (
@@ -288,6 +303,7 @@ function JoinedConversation({
             </div>
           </div>
           <div className="channel-header-actions">
+            <ConversationNotifications channel={channel} />
             <button
               className="icon-button"
               aria-label="Channel details and members"
@@ -328,7 +344,6 @@ function JoinedConversation({
               <button key={id} className={tab === id ? 'selected' : ''} onClick={() => setTab(id)}>
                 <Icon size={15} />
                 {label}
-                {id === 'pinned' && <span className="soon-dot" />}
               </button>
             ))}
           </div>
@@ -349,7 +364,16 @@ function JoinedConversation({
             <FilesPanel key={channel.id} channel={channel} />
           )
         ) : tab !== 'messages' ? (
-          <Empty title="Keep important messages in view">Pinned messages are coming soon.</Empty>
+          chat.status === 'Access unavailable' ? (
+            <Empty title="Access unavailable">You no longer have access to these pins.</Empty>
+          ) : (
+            <MessageCollection
+              channel={channel}
+              user={user}
+              query={filter}
+              open={(_, message) => void jumpTo(message.id)}
+            />
+          )
         ) : (
           <>
             {chat.status === 'Reconnecting' && (
@@ -367,6 +391,7 @@ function JoinedConversation({
               </div>
             )}
             <Alert>{error}</Alert>
+            <Alert>{organization.error}</Alert>
             {chat.browsingHistory && (
               <div className="history-banner">
                 <span>Viewing earlier messages</span>
@@ -485,6 +510,12 @@ function JoinedConversation({
                               onClick={() => void jumpTo(message.quote!.id)}
                             />
                           )}
+                          {!message.deleted_at &&
+                            organization.marks?.pinned.includes(message.id) && (
+                              <small className="message-pin-label">
+                                <Pin size={12} /> Pinned
+                              </small>
+                            )}
                           <RichMessage message={message} />
                           <Reactions
                             message={message}
@@ -495,6 +526,11 @@ function JoinedConversation({
                           />
                         </div>
                         <div className="message-actions">
+                          <MessageMarkActions
+                            message={message}
+                            channel={channel}
+                            state={organization}
+                          />
                           {!message.deleted_at && !channel.archived_at && (
                             <button
                               className="icon-button"
@@ -1053,6 +1089,7 @@ function Composer({
         )}
         <RichEditor
           document={effectiveDocument}
+          mentionPath={channelPath(channel.workspace_id, channel.id)}
           label={`Message ${channel.name}`}
           placeholder={
             draft.quote

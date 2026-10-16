@@ -13,6 +13,7 @@ import {
 import { api, errorMessage } from '@/lib/api';
 import { channelPath, type Channel, type Message, type User, type Workspace } from '@/lib/types';
 import { useMemberName } from '@/lib/member-names';
+import { NotificationPause } from './message-organization';
 import { Alert, Avatar, Empty, Loading } from './ui';
 
 type InboxAlert = { channel: Channel; message: Message; unread_count: number };
@@ -124,7 +125,7 @@ export function Alerts({
           <h1>
             Alerts <span className="count">{items.length}</span>
           </h1>
-          <p>Unread conversations, all in one place. Pick up where your team left off.</p>
+          <p>Unread messages matching your notification preferences, all in one place.</p>
         </div>
         <button
           disabled={busy || loading || !visible.length}
@@ -133,6 +134,7 @@ export function Alerts({
           <CheckCheck size={17} /> {busy ? 'Marking as read…' : 'Mark shown as read'}
         </button>
       </div>
+      <NotificationPause changed={() => setAttempt((value) => value + 1)} />
       <div className="alerts-summary">
         <span className="alerts-bell">
           <Bell size={23} />

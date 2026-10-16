@@ -6,17 +6,24 @@ from datetime import datetime
 from typing import Any, cast
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as postgresql_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from klack.modules.channels.infrastructure.models import ChannelMembershipRecord, ChannelRecord
 from klack.modules.files.domain import Attachment
 from klack.modules.files.models import FileRecord
-from klack.modules.messaging.domain.document import Document
+from klack.modules.messaging.domain.document import Document, mention_ids
 from klack.modules.messaging.domain.entities import Message, MessageQuote
-from klack.modules.messaging.infrastructure.models import MessageRecord, ReactionRecord
+from klack.modules.messaging.domain.errors import InvalidMessageBody
+from klack.modules.messaging.infrastructure.models import (
+    MentionRecord,
+    MessageRecord,
+    ReactionRecord,
+)
+from klack.modules.workspaces.infrastructure.models import MembershipRecord
 
 
 class SqlAlchemyMessageRepository:
@@ -28,6 +35,7 @@ class SqlAlchemyMessageRepository:
     async def add_message(self, message: Message) -> None:
         self._session.add(self._record(message))
         await self._session.flush()
+        await self._sync_mentions(message.id, message.channel_id, message.document)
 
     async def add_message_idempotently(self, message: Message) -> bool:
         values = self._record_values(message)
@@ -52,7 +60,10 @@ class SqlAlchemyMessageRepository:
                 )
             )
             result = await self._session.execute(sqlite_statement)
-        return bool(cast(CursorResult[Any], result).rowcount)
+        inserted = bool(cast(CursorResult[Any], result).rowcount)
+        if inserted:
+            await self._sync_mentions(message.id, message.channel_id, message.document)
+        return inserted
 
     async def get_message_by_client_id(
         self,
@@ -168,6 +179,52 @@ class SqlAlchemyMessageRepository:
                 **({"attachment_count": 0} if deleted_at is not None else {}),
             ),
         )
+
+        row = await self._session.get(MessageRecord, message_id)
+        assert row is not None
+        await self._sync_mentions(message_id, row.channel_id, None if deleted_at else document)
+
+    async def _sync_mentions(
+        self, message_id: UUID, channel_id: UUID, document: Document | None
+    ) -> None:
+        recipients = mention_ids(document)
+        previous = set(
+            await self._session.scalars(
+                select(MentionRecord.user_id).where(MentionRecord.message_id == message_id)
+            )
+        )
+        new_recipients = recipients - previous
+        if new_recipients:
+            channel = await self._session.get(ChannelRecord, channel_id)
+            assert channel is not None
+            allowed = set(
+                await self._session.scalars(
+                    select(ChannelMembershipRecord.user_id).where(
+                        ChannelMembershipRecord.channel_id == channel_id,
+                        ChannelMembershipRecord.user_id.in_(new_recipients),
+                        *(
+                            []
+                            if channel.direct_key
+                            else [
+                                ChannelMembershipRecord.user_id.in_(
+                                    select(MembershipRecord.user_id).where(
+                                        MembershipRecord.workspace_id == channel.workspace_id
+                                    )
+                                )
+                            ]
+                        ),
+                    )
+                )
+            )
+            if allowed != new_recipients:
+                raise InvalidMessageBody
+        await self._session.execute(
+            delete(MentionRecord).where(MentionRecord.message_id == message_id)
+        )
+        self._session.add_all(
+            [MentionRecord(message_id=message_id, user_id=user_id) for user_id in recipients]
+        )
+        await self._session.flush()
 
     async def commit(self) -> None:
         await self._session.commit()

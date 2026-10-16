@@ -263,3 +263,32 @@ Under `/api/v1/workspaces/{workspace_id}/channels/{channel_id}/files`:
 All mutations retain Origin and CSRF checks. Upload IDs are bound to the uploader and
 conversation; they are not public access tokens. Downloads require current membership.
 See [file-sharing operations](files.md) for storage and lifecycle details.
+
+## Mentions and message organization
+
+Rich documents accept inline `mention` atoms inside paragraphs with `attrs.id` (user UUID)
+and `attrs.label` (1–100 characters). Fallback body text includes `@label`. New mention identities
+must belong to the same conversation (and current workspace for channels). IDs are indexed
+transactionally on sends and edits and removed when content is deleted; unselected plain text
+is not treated as a mention. Retained mentions can still render after a recipient leaves.
+
+Under `/workspaces/{workspace}/channels/{channel}`:
+
+- `GET /mention-candidates`: authorized current members, with identity, label, and email.
+- `GET /message-marks`: shared pinned IDs and the caller's private saved IDs for live messages.
+- `PUT|DELETE /messages/{message}/pin`: idempotently add/remove a shared pin; active members only.
+- `PUT|DELETE /messages/{message}/save`: idempotently add/remove the caller's private bookmark.
+- `GET /pins?offset=0&limit=50`: paginated current messages and channels with `next_offset`.
+- `GET|PUT /notifications`: `{ "mode": "all" | "mentions" | "muted" }`, default `all`.
+
+`GET /saved-messages?offset=0&limit=50` returns `{items: [{channel, message}], next_offset}`
+across currently accessible conversations; limit is 1–100. Collections exclude deleted messages
+and revoked memberships, and preserve personal DM access independently of workspace membership.
+`GET /notification-pause` returns `{paused_until}`; `PUT /notification-pause` accepts
+`{minutes: 0|30|60|120|480|1440}` (zero resumes). Pause state is private to the caller.
+All mutations require the existing authenticated session and CSRF checks.
+
+Alerts return only unread messages matching the preference, with the latest eligible preview
+and eligible-message count. A pause suppresses Alerts until expiry. `/unread-counts` and read
+cursors continue to describe all unread messages; incoming voice calls are unaffected.
+Apply migration `20261016_0013` before deploying this version.

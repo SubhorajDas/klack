@@ -15,12 +15,12 @@ modular monolith and PostgreSQL. LiveKit provides optional voice media transport
 - Private file sharing in channels, DMs, and quoted replies, with upload progress, image previews, and downloads.
 - Private one-to-one DMs, persistent read positions, and unread counts.
 - Redis typing indicators, read receipts, and online status across tabs and devices.
-- Alerts inbox for unread channel messages, DMs, and quoted replies, with search and mark-as-read actions.
+- Alerts inbox with per-conversation all/mentions/muted preferences and account-wide timed pauses.
+- Member-aware @mentions, shared pinned messages, and private saved messages across conversations.
 - Voice calls with accept/decline, microphone controls, history, and incoming notifications while the app is open.
 - Responsive desktop/mobile layouts and tab-local message drafts.
 
-Pinned/saved messages, group/video calls, SSO, and editable profiles are not
-implemented. Search filters loaded messages; it is not a full-history search service.
+Group/video calls, SSO, and editable profiles are not implemented. Search filters loaded messages; it is not a full-history search service.
 
 ## Quick start
 

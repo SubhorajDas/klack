@@ -28,8 +28,10 @@ import {
   GripVertical,
   X,
   Paperclip,
+  AtSign,
 } from 'lucide-react';
 import { emptyDocument, plainText, safeLink, type RichDocument } from '@/lib/rich-text';
+import { api, errorMessage } from '@/lib/api';
 import { fileSize, type QueuedFile } from './files';
 import { codeLanguages, lowlight } from './rich-message';
 
@@ -126,6 +128,27 @@ const AttachmentNode = Node.create({
   },
 });
 
+const MentionNode = Node.create({
+  name: 'mention',
+  group: 'inline',
+  inline: true,
+  atom: true,
+  addAttributes() {
+    return { id: { default: null }, label: { default: '' } };
+  },
+  parseHTML() {
+    return [];
+  },
+  renderHTML({ node }) {
+    return ['span', { class: 'mention', 'data-user-id': node.attrs.id }, `@${node.attrs.label}`];
+  },
+  renderText({ node }) {
+    return `@${node.attrs.label}`;
+  },
+});
+type Candidate = { user_id: string; label: string; email: string };
+type MentionQuery = { from: number; to: number; query: string };
+
 export function RichEditor({
   document,
   change,
@@ -139,6 +162,7 @@ export function RichEditor({
   preserveFiles = false,
   register,
   send,
+  mentionPath,
 }: {
   document?: RichDocument;
   change: (document: RichDocument, body: string) => void;
@@ -152,7 +176,32 @@ export function RichEditor({
   preserveFiles?: boolean;
   register?: (editor: Editor | null) => void;
   send?: () => void;
+  mentionPath?: string;
 }) {
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
+  const [mentionError, setMentionError] = useState('');
+  const [mentionAttempt, setMentionAttempt] = useState(0);
+  const [mention, setMention] = useState<MentionQuery | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const dismissed = useRef('');
+  const mentionKeys = useRef<(event: KeyboardEvent) => boolean>(() => false);
+  const refreshMention = useRef<(editor: Editor) => void>(() => {});
+  useEffect(() => {
+    let active = true;
+    setCandidates([]);
+    setMentionError('');
+    if (mentionPath)
+      api<Candidate[]>(`${mentionPath}/mention-candidates`)
+        .then((rows) => {
+          if (active) setCandidates(rows);
+        })
+        .catch((failure) => {
+          if (active) setMentionError(errorMessage(failure));
+        });
+    return () => {
+      active = false;
+    };
+  }, [mentionPath, mentionAttempt]);
   const callbacks = useRef({ change, send, register, locked });
   callbacks.current = { change, send, register, locked };
   const [panel, setPanel] = useState<'link' | 'markdown' | null>(null);
@@ -172,6 +221,7 @@ export function RichEditor({
       Placeholder.configure({ placeholder }),
       Markdown,
       AttachmentNode,
+      MentionNode,
     ],
     content: document || emptyDocument(),
     editable: !locked,
@@ -183,6 +233,7 @@ export function RichEditor({
         class: 'rich-text rich-editor-input',
       },
       handleKeyDown: (view, event) => {
+        if (!callbacks.current.locked && mentionKeys.current(event)) return true;
         if (
           event.key !== 'Enter' ||
           event.isComposing ||
@@ -233,11 +284,80 @@ export function RichEditor({
         return false;
       },
     },
-    onUpdate: ({ editor }) =>
-      callbacks.current.change(editor.getJSON(), plainText(editor.getJSON()).trim()),
+    onUpdate: ({ editor }) => {
+      callbacks.current.change(editor.getJSON(), plainText(editor.getJSON()).trim());
+      refreshMention.current(editor);
+    },
+    onSelectionUpdate: ({ editor }) => refreshMention.current(editor),
     onCreate: ({ editor }) => callbacks.current.register?.(editor),
     onDestroy: () => callbacks.current.register?.(null),
   });
+  refreshMention.current = (current) => {
+    const { $from, empty } = current.state.selection;
+    if (
+      !mentionPath ||
+      locked ||
+      !empty ||
+      $from.parent.type.name !== 'paragraph' ||
+      current.isActive('code') ||
+      current.isActive('link')
+    ) {
+      setMention(null);
+      return;
+    }
+    const before = $from.parent.textBetween(0, $from.parentOffset, '\n', '\ufffc');
+    const match = /(?:^|\s)@([^\s@]*)$/.exec(before);
+    if (!match) {
+      setMention(null);
+      dismissed.current = '';
+      return;
+    }
+    const from = $from.pos - match[1].length - 1;
+    if (dismissed.current === `${from}:${$from.pos}:${match[1]}`) return;
+    setMention((previous) =>
+      previous?.from === from && previous.to === $from.pos && previous.query === match[1]
+        ? previous
+        : { from, to: $from.pos, query: match[1] },
+    );
+    setMentionIndex(0);
+  };
+  const matches = candidates
+    .filter((person) =>
+      `${person.label} ${person.email}`.toLowerCase().includes(mention?.query.toLowerCase() || ''),
+    )
+    .slice(0, 8);
+  function chooseMention(person: Candidate) {
+    if (!editor || !mention || locked) return;
+    editor
+      .chain()
+      .focus()
+      .insertContentAt({ from: mention.from, to: mention.to }, [
+        { type: 'mention', attrs: { id: person.user_id, label: person.label } },
+        { type: 'text', text: ' ' },
+      ])
+      .run();
+    setMention(null);
+  }
+  mentionKeys.current = (event) => {
+    if (!mention || event.isComposing) return false;
+    if (event.key === 'Escape') {
+      dismissed.current = `${mention.from}:${mention.to}:${mention.query}`;
+      setMention(null);
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      setMentionIndex(
+        (index) => (index + step + Math.max(matches.length, 1)) % Math.max(matches.length, 1),
+      );
+    } else if (event.key === 'Enter' || event.key === 'Tab') {
+      if (matches.length) chooseMention(matches[mentionIndex % matches.length]);
+      else if (event.key === 'Tab') {
+        setMention(null);
+        return false;
+      }
+    } else return false;
+    event.preventDefault();
+    return true;
+  };
   const state = useEditorState({
     editor,
     selector: ({ editor }) => ({
@@ -367,6 +487,21 @@ export function RichEditor({
           >
             <FileCode size={16} />
           </button>
+          {mentionPath && (
+            <button
+              type="button"
+              className="icon-button"
+              aria-label="Mention someone"
+              title="Mention someone"
+              disabled={locked || !editor || !!state?.codeBlock}
+              onClick={() => {
+                dismissed.current = '';
+                editor?.chain().focus().insertContent(' @').run();
+              }}
+            >
+              <AtSign size={16} />
+            </button>
+          )}
           {state?.codeBlock && (
             <select
               aria-label="Code language"
@@ -455,6 +590,32 @@ export function RichEditor({
                 Cancel
               </button>
             </div>
+          </div>
+        )}
+        {mention && !locked && (
+          <div className="mention-picker" aria-label="Mention a conversation member">
+            <div role="listbox" aria-label="Mention suggestions">
+              {matches.map((person, index) => (
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={index === mentionIndex % Math.max(matches.length, 1)}
+                  key={person.user_id}
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => chooseMention(person)}
+                >
+                  <strong>@{person.label}</strong>
+                  <small>{person.email}</small>
+                </button>
+              ))}
+            </div>
+            {!matches.length && <p>{mentionError || 'No matching conversation members.'}</p>}
+            {mentionError && (
+              <button type="button" onClick={() => setMentionAttempt((value) => value + 1)}>
+                Retry loading members
+              </button>
+            )}
+            <small>Arrow keys to choose · Enter to mention · Esc to close</small>
           </div>
         )}
         <EditorContent editor={editor} />

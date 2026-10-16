@@ -1,6 +1,6 @@
 # Klack frontend
 
-Next.js App Router, React, and TypeScript frontend based on the supplied desktop/mobile UI references. All application data comes from the existing FastAPI API. Apply backend migrations through `20261004_0012` before starting the frontend.
+Next.js App Router, React, and TypeScript frontend based on the supplied desktop/mobile UI references. All application data comes from the existing FastAPI API. Apply backend migrations through `20261016_0013` before starting the frontend.
 
 See the [full-app quick start](../README.md#quick-start), [API contracts](../docs/api.md), and
 [system architecture](../docs/architecture/README.md) for the backend and runtime context.
@@ -103,7 +103,7 @@ The backend stack must be running for sign-in. No demo account is automatically 
 - Account details, email verification requests, active session revocation, and a browser-local compact message preference.
 - Search within loaded channel messages and filtering available channels.
 
-The references also contain features that the backend does not support yet: pinned/saved messages, group/video calls, Google/SSO, editable profiles, channel descriptions and notification preferences. These are marked as upcoming where shown; no successful backend action is simulated. Initials are used in place of profile photos. The conversation on the sign-in illustration is decorative sample copy.
+The references also contain features that the backend does not support yet: group/video calls, Google/SSO, editable profiles and channel descriptions. These are marked as upcoming where shown; no successful backend action is simulated. Initials are used in place of profile photos. The conversation on the sign-in illustration is decorative sample copy.
 
 ## Verification
 
@@ -126,3 +126,24 @@ The rail lists all workspaces; its plus opens create/join actions. DM, workspace
 badges share `/unread-counts`; the bell displays their combined unread-message total. Counts
 refresh every five seconds while visible, on focus, and after read/message events across tabs.
 Workspace counts exclude personal DMs. People stays in the header and account actions in the profile.
+
+## Mentions, message organization, and notification preferences
+
+Type `@` followed by a name (or select **Mention someone** in the composer) and choose a
+conversation member with the keyboard or pointer. Mention atoms preserve the selected identity
+through drafts, editing, and rich rendering; plain typed names do not notify anyone. Only current
+conversation members are offered, and new recipients are validated on the server.
+
+Each live message has **Pin message** and **Save message** actions. Pins are shared with all
+conversation members in the Pinned tab; any current member can pin/unpin in an active conversation.
+Saves are private and available from the Saved messages navigation item at `/saved`. Both lists
+show current content, hide deleted messages, check membership at read time, and support pagination
+and opening the original message, including older history. Archived conversations retain pins
+and allow private saves; shared pins cannot be changed until the conversation is restored.
+
+The bell in a conversation chooses **All messages**, **Mentions only**, or **Mute conversation**
+for Alerts. The Alerts page also pauses alerts for 30 minutes through 24 hours or resumes them
+early. Preferences persist across devices. Muting/pausing filters the existing Alerts inbox;
+message unread counts, typing, receipts, and incoming calls are unaffected. There is no OS/browser
+push or email notification delivery. Preferences and collections refresh while visible every
+15 seconds and on relevant local events. Saved-message search filters the loaded collection.

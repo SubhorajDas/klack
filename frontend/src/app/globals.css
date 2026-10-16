@@ -3475,3 +3475,140 @@ button.message-quote:hover {
   gap: 10px;
   margin-top: 12px;
 }
+
+/* Message organization and attention controls */
+.mention {
+  color: var(--purple);
+  background: var(--soft);
+  border-radius: 4px;
+  padding: 1px 4px;
+  font-weight: 650;
+  overflow-wrap: anywhere;
+}
+.mention-picker {
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--canvas);
+  max-height: 280px;
+  overflow-y: auto;
+}
+.mention-picker [role='listbox'] {
+  display: grid;
+  gap: 3px;
+}
+.mention-picker [role='option'] {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  border: 0;
+  padding: 8px;
+}
+.mention-picker [aria-selected='true'] {
+  background: var(--soft);
+  color: var(--purple);
+}
+.mention-picker small,
+.notification-choice small,
+.notification-pause small {
+  color: var(--muted);
+  display: block;
+}
+.message-pin-label {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--purple);
+  margin: 3px 0;
+}
+.message-actions [aria-pressed='true'] {
+  color: var(--purple);
+  background: var(--soft);
+}
+.collection-page {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+.collection-list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+  margin: 20px 0;
+}
+.collection-card {
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 20px;
+  background: var(--canvas);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.collection-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  align-items: center;
+  margin-bottom: 12px;
+}
+.collection-context span,
+.collection-context time {
+  color: var(--muted);
+  font-size: 12px;
+}
+.collection-card .button-row {
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+.collection-card .message-rich-text {
+  margin: 10px 0;
+}
+.notification-choice {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+.notification-choice input {
+  width: auto;
+  margin-top: 4px;
+  accent-color: var(--purple);
+}
+.notification-pause {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.notification-pause label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+}
+.notification-pause small {
+  flex-basis: 100%;
+}
+@media (max-width: 600px) {
+  .collection-card {
+    padding: 14px;
+  }
+  .collection-context {
+    gap: 5px 10px;
+  }
+  .collection-card .button-row button {
+    flex: 1;
+  }
+  .message-actions {
+    max-width: calc(100vw - 70px);
+    flex-wrap: wrap;
+  }
+}

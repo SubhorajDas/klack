@@ -14,12 +14,20 @@ const user = {
 const workspace = { id: wid, name: 'Design team', created_at: user.created_at };
 let channels, messages, writes, subscribers, invitations, mode;
 let cursors;
+let pins = new Set(),
+  saved = new Set(),
+  notificationModes = new Map(),
+  pausedUntil = null;
 let receiptPositions = new Map();
 let typingCommands = [];
 let presenceAvailable = true;
 let presenceUsers = [];
 let hasWorkspace;
 function reset() {
+  pins = new Set();
+  saved = new Set();
+  notificationModes = new Map();
+  pausedUntil = null;
   hasWorkspace = true;
   channels = [
     {
@@ -146,6 +154,43 @@ const server = createServer(async (req, res) => {
     res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
     res.end(status === 204 ? undefined : JSON.stringify(value));
   };
+  if (path === '/notification-pause') {
+    if (req.method === 'PUT')
+      pausedUntil = body.minutes ? new Date(Date.now() + body.minutes * 60000).toISOString() : null;
+    return json({ paused_until: pausedUntil });
+  }
+  if (path.endsWith('/mention-candidates'))
+    return json([
+      { user_id: uid, label: 'maya', email: user.email },
+      { user_id: '44444444-4444-4444-8444-444444444444', label: 'alex', email: 'alex@design.team' },
+    ]);
+  if (path.endsWith('/notifications')) {
+    const id = path.split('/')[4];
+    if (req.method === 'PUT') notificationModes.set(id, body.mode);
+    return json({ mode: notificationModes.get(id) || 'all' });
+  }
+  if (path.endsWith('/message-marks')) return json({ pinned: [...pins], saved: [...saved] });
+  const marking = /\/messages\/([^/]+)\/(pin|save)$/.exec(path);
+  if (marking) {
+    const set = marking[2] === 'pin' ? pins : saved;
+    if (req.method === 'PUT') set.add(marking[1]);
+    else set.delete(marking[1]);
+    return json(null, 204);
+  }
+  if (path === '/saved-messages' || path.endsWith('/pins')) {
+    const set = path === '/saved-messages' ? saved : pins;
+    const all = messages
+      .filter((m) => set.has(m.id) && !m.deleted_at)
+      .map((message) => ({
+        channel: channels.find((c) => c.id === message.channel_id),
+        message: withQuote(message),
+      }));
+    const offset = Number(url.searchParams.get('offset') || 0);
+    return json({
+      items: all.slice(offset, offset + 50),
+      next_offset: all.length > offset + 50 ? offset + 50 : null,
+    });
+  }
   if (path === '/health') return json({ ok: true });
   if (path === '/__reset') {
     for (const client of wss.clients) client.close();

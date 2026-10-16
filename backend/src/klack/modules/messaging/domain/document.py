@@ -24,7 +24,7 @@ def validate_document(document: Document | None, body: str, attachments: tuple[U
     count = 0
     children = {
         "doc": {"paragraph", "blockquote", "bulletList", "orderedList", "codeBlock", "attachment"},
-        "paragraph": {"text", "hardBreak"},
+        "paragraph": {"text", "hardBreak", "mention"},
         "blockquote": {
             "paragraph",
             "blockquote",
@@ -44,6 +44,7 @@ def validate_document(document: Document | None, body: str, attachments: tuple[U
             "attachment",
         },
         "codeBlock": {"text"},
+        "mention": set(),
         "text": set(),
         "hardBreak": set(),
         "attachment": set(),
@@ -66,11 +67,26 @@ def validate_document(document: Document | None, body: str, attachments: tuple[U
             raise InvalidMessageBody
         allowed_attrs = {
             "attachment": {"id"},
+            "mention": {"id", "label"},
             "codeBlock": {"language"},
             "orderedList": {"start", "type"},
         }
         if set(attrs) - allowed_attrs.get(kind, set()):
             raise InvalidMessageBody
+        if kind == "mention":
+            try:
+                UUID(attrs["id"])
+            except (KeyError, ValueError, TypeError, AttributeError) as error:
+                raise InvalidMessageBody from error
+            label = attrs.get("label")
+            if (
+                not isinstance(label, str)
+                or not label.strip()
+                or len(label) > 100
+                or any(ord(char) < 32 for char in label)
+                or node.get("content")
+            ):
+                raise InvalidMessageBody
         if kind == "attachment":
             try:
                 references.append(UUID(attrs["id"]))
@@ -143,6 +159,8 @@ def validate_document(document: Document | None, body: str, attachments: tuple[U
             return str(node["text"])
         if "text" in node:
             raise InvalidMessageBody
+        if kind == "mention":
+            return "@" + str(attrs["label"])
         if kind == "hardBreak":
             return "\n"
         separator = "" if kind in {"paragraph", "codeBlock"} else "\n"
@@ -152,3 +170,12 @@ def validate_document(document: Document | None, body: str, attachments: tuple[U
         raise InvalidMessageBody
     if len(references) != len(set(references)) or set(references) != set(attachments):
         raise InvalidMessageBody
+
+
+def mention_ids(document: Document | None) -> set[UUID]:
+    """Extract explicit mention atoms from an already validated document."""
+    if not document:
+        return set()
+    if document.get("type") == "mention":
+        return {UUID(document["attrs"]["id"])}
+    return {user for child in document.get("content", []) for user in mention_ids(child)}

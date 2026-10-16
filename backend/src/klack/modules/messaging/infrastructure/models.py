@@ -119,3 +119,69 @@ class ReadCursorRecord(Base):
     channel_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     user_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     message_id: Mapped[UUID] = mapped_column(Uuid, nullable=False)
+
+
+class MentionRecord(Base):
+    """Validated explicit recipients indexed separately from rich message content."""
+
+    __tablename__ = "message_mentions"
+    message_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("message_messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("identity_users.id", ondelete="CASCADE"), primary_key=True
+    )
+    __table_args__ = (Index("ix_message_mentions_user_id_message_id", "user_id", "message_id"),)
+
+
+class PinRecord(Base):
+    """A shared reference to a live message; content is never copied."""
+
+    __tablename__ = "message_pins"
+    message_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("message_messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("identity_users.id", ondelete="CASCADE"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class SavedMessageRecord(Base):
+    """Private bookmarks owned by a single identity."""
+
+    __tablename__ = "message_saved"
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("identity_users.id", ondelete="CASCADE"), primary_key=True
+    )
+    message_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("message_messages.id", ondelete="CASCADE"), primary_key=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class NotificationPreferenceRecord(Base):
+    """An identity's alert delivery policy for one joined conversation."""
+
+    __tablename__ = "message_notification_preferences"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["channel_id", "user_id"],
+            ["channel_memberships.channel_id", "channel_memberships.user_id"],
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("mode IN ('all', 'mentions', 'muted')", name="supported_mode"),
+    )
+    channel_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    user_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    mode: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class NotificationPauseRecord(Base):
+    """Account-wide timed alert pause, shared across devices."""
+
+    __tablename__ = "message_notification_pauses"
+    user_id: Mapped[UUID] = mapped_column(
+        Uuid, ForeignKey("identity_users.id", ondelete="CASCADE"), primary_key=True
+    )
+    paused_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

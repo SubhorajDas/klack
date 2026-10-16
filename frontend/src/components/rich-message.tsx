@@ -108,6 +108,12 @@ export function RichMessage({ message }: { message: Message }) {
         }
         return <span key={key}>{text}</span>;
       }
+      case 'mention':
+        return (
+          <span key={key} className="mention" data-user-id={node.attrs?.id}>
+            @{String(node.attrs?.label || 'member')}
+          </span>
+        );
       case 'paragraph':
         return <p key={key}>{children || <br />}</p>;
       case 'hardBreak':

@@ -8,6 +8,7 @@ export const emptyDocument = (): RichDocument => ({
 });
 
 export function plainText(node: RichDocument): string {
+  if (node.type === 'mention') return `@${node.attrs?.label || ''}`;
   if (node.type === 'text') return node.text || '';
   if (node.type === 'hardBreak') return '\n';
   return (node.content || [])

@@ -18,6 +18,7 @@ import {
   ArrowUpRight,
   ArrowRight,
   LayoutGrid,
+  Bookmark,
 } from 'lucide-react';
 import { api, ApiError, errorMessage } from '@/lib/api';
 import { useCachedApiData } from '@/lib/use-cached-data';
@@ -35,9 +36,10 @@ import { DirectMessages, Unread } from './direct-messages';
 import { Conversation } from './conversation';
 import { People, Account } from './management';
 import { Alerts } from './alerts';
+import { MessageCollection } from './message-organization';
 import { UnreadCountsProvider, UnreadBadge, useUnreadCounts } from '@/lib/unread-counts';
 
-type View = 'home' | 'channels' | 'people' | 'settings' | 'dms' | 'activity' | 'channel';
+type View = 'home' | 'channels' | 'people' | 'settings' | 'dms' | 'activity' | 'channel' | 'saved';
 type Dialog =
   | 'add-workspace'
   | 'create-workspace'
@@ -67,11 +69,13 @@ function WorkspaceShell({ user, setUser }: { user: User; setUser: (user: User | 
   const routeView = (
     parts[1] === 'dms'
       ? 'dms'
-      : pathname === '/activity'
-        ? 'activity'
-        : pathname === '/settings'
-          ? 'settings'
-          : parts[3]
+      : pathname === '/saved'
+        ? 'saved'
+        : pathname === '/activity'
+          ? 'activity'
+          : pathname === '/settings'
+            ? 'settings'
+            : parts[3]
   ) as View | undefined;
   const cachedWorkspaces = useCachedApiData<{ workspaces: Workspace[] }>('/workspaces');
   const [workspaceList, setWorkspaces] = useState<Workspace[]>([]);
@@ -175,7 +179,9 @@ function WorkspaceShell({ user, setUser }: { user: User; setUser: (user: User | 
     setView(
       routeChannel
         ? 'channel'
-        : ['home', 'channels', 'people', 'settings', 'dms', 'activity'].includes(routeView || '')
+        : ['home', 'channels', 'people', 'settings', 'dms', 'activity', 'saved'].includes(
+              routeView || '',
+            )
           ? routeView!
           : 'home',
     );
@@ -192,6 +198,10 @@ function WorkspaceShell({ user, setUser }: { user: User; setUser: (user: User | 
     setFilter('');
     if (next === 'dms' || next === 'activity') {
       router.push(next === 'dms' ? `/dms${id ? `/${id}` : ''}` : '/activity');
+      return;
+    }
+    if (next === 'saved') {
+      router.push('/saved');
       return;
     }
     if (next === 'settings') {
@@ -245,6 +255,7 @@ function WorkspaceShell({ user, setUser }: { user: User; setUser: (user: User | 
   const navItems = [
     { key: 'home', label: 'Home', icon: Home },
     { key: 'dms', label: 'Direct messages', icon: MessageCircle },
+    { key: 'saved', label: 'Saved messages', icon: Bookmark },
   ] as const;
   if (loading && !cachedWorkspaces && !workspaceList.length)
     return (
@@ -379,27 +390,31 @@ function WorkspaceShell({ user, setUser }: { user: User; setUser: (user: User | 
             >
               <Menu size={22} />
             </button>
-            {workspace || view === 'dms' || view === 'activity' ? (
+            {workspace || view === 'dms' || view === 'activity' || view === 'saved' ? (
               <div className="topbar-search">
                 <Search size={17} />
                 <input
                   aria-label={
                     view === 'channel' || (view === 'dms' && routeDirect)
                       ? 'Search loaded messages'
-                      : view === 'activity'
-                        ? 'Search alerts'
-                        : view === 'dms'
-                          ? 'Search direct messages'
-                          : 'Search channels'
+                      : view === 'saved'
+                        ? 'Search loaded saved messages'
+                        : view === 'activity'
+                          ? 'Search alerts'
+                          : view === 'dms'
+                            ? 'Search direct messages'
+                            : 'Search channels'
                   }
                   placeholder={
                     view === 'channel' || (view === 'dms' && routeDirect)
                       ? 'Search messages in this conversation'
-                      : view === 'activity'
-                        ? 'Find an unread conversation'
-                        : view === 'dms'
-                          ? 'Find a direct conversation'
-                          : 'Find a channel in your workspace'
+                      : view === 'saved'
+                        ? 'Search your loaded saved messages'
+                        : view === 'activity'
+                          ? 'Find an unread conversation'
+                          : view === 'dms'
+                            ? 'Find a direct conversation'
+                            : 'Find a channel in your workspace'
                   }
                   value={filter}
                   onChange={(event) => {
@@ -408,7 +423,8 @@ function WorkspaceShell({ user, setUser }: { user: User; setUser: (user: User | 
                       view !== 'channel' &&
                       view !== 'channels' &&
                       view !== 'dms' &&
-                      view !== 'activity'
+                      view !== 'activity' &&
+                      view !== 'saved'
                     ) {
                       setView('channels');
                       router.push(`/w/${workspaceId}/channels`);
@@ -480,6 +496,18 @@ function WorkspaceShell({ user, setUser }: { user: User; setUser: (user: User | 
               select={(id) => {
                 setFilter('');
                 router.push(`/dms${id ? `/${id}` : ''}`);
+              }}
+            />
+          ) : view === 'saved' ? (
+            <MessageCollection
+              user={user}
+              query={filter}
+              open={(item, message) => {
+                setFilter('');
+                if (!item.direct_key) setWorkspaceId(item.workspace_id);
+                router.push(
+                  `${item.direct_key ? `/dms/${item.id}` : `/w/${item.workspace_id}/channel/${item.id}`}?message=${message.id}`,
+                );
               }}
             />
           ) : view === 'activity' ? (
